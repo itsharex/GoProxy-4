@@ -11,6 +11,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 )
 
+replace github.com/getlantern/systray => ./third_party/systray
+
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/BurntSushi/toml v1.6.0 // indirect

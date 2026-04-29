@@ -51,7 +51,10 @@ export namespace config {
 	    theme: string;
 	    language: string;
 	    startMinimized: boolean;
+	    autoStartProxy: boolean;
 	    showTrayIcon: boolean;
+	    closeToTray: boolean;
+	    trayStatusAndIp: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new UIConfig(source);
@@ -62,7 +65,10 @@ export namespace config {
 	        this.theme = source["theme"];
 	        this.language = source["language"];
 	        this.startMinimized = source["startMinimized"];
+	        this.autoStartProxy = source["autoStartProxy"];
 	        this.showTrayIcon = source["showTrayIcon"];
+	        this.closeToTray = source["closeToTray"];
+	        this.trayStatusAndIp = source["trayStatusAndIp"];
 	    }
 	}
 	export class LogConfig {

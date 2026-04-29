@@ -85,11 +85,12 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 		runtimeCfg:    cfg,
 		collector:     collector,
 		server:        proxy.NewServer(cfg, collector),
-		tray:          platform.NewTrayManager(cfg.UI.ShowTrayIcon),
+		tray:          platform.NewTrayManager(cfg.UI.ShowTrayIcon, cfg.UI.CloseToTray, cfg.UI.TrayStatusAndIP),
 	}, nil
 }
 
 func (a *App) startup(ctx context.Context) {
+	cfg := a.cfg
 	a.mu.Lock()
 	a.ctx = ctx
 
@@ -98,13 +99,7 @@ func (a *App) startup(ctx context.Context) {
 
 	if a.tray != nil {
 		a.tray.Startup(ctx)
-		a.tray.StartNative(trayIcon, platform.TrayActions{
-			ShowWindow:      a.ShowWindow,
-			StartServer:     a.StartServer,
-			StopServer:      a.StopServer,
-			Quit:            a.QuitApp,
-			IsServerRunning: func() bool { return a.GetServerStatus().Running },
-		})
+		a.tray.StartNative(trayIcon, a.trayActions())
 	}
 	if a.logger != nil {
 		a.subscribeLoggerLocked(a.logger)
@@ -112,6 +107,12 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.emitStatusLocked()
 	a.mu.Unlock()
+	if cfg.UI.AutoStartProxy {
+		_ = a.StartServer()
+	}
+	if cfg.UI.StartMinimized && cfg.UI.ShowTrayIcon {
+		a.HideToTray()
+	}
 	go a.emitStatsLoop(ctx)
 }
 
@@ -119,10 +120,14 @@ func (a *App) shutdown(ctx context.Context) {
 	a.mu.Lock()
 	server := a.server
 	logManager := a.logger
+	tray := a.tray
 	a.mu.Unlock()
 
 	if server != nil {
 		_ = server.Stop()
+	}
+	if tray != nil {
+		tray.StopNative()
 	}
 	if logManager != nil {
 		logManager.Info(appSource, "应用正在退出")
@@ -167,6 +172,13 @@ func (a *App) SaveConfig(cfg config.Config) error {
 	a.cfg = cfg
 	if a.tray != nil {
 		a.tray.SetEnabled(cfg.UI.ShowTrayIcon)
+		a.tray.SetCloseToTray(cfg.UI.CloseToTray)
+		a.tray.SetStatusIPVisible(cfg.UI.TrayStatusAndIP)
+		if cfg.UI.ShowTrayIcon {
+			a.tray.StartNative(trayIcon, a.trayActions())
+		} else {
+			a.tray.StopNative()
+		}
 	}
 	if newLogger != nil {
 		oldLogger := a.logger
@@ -311,6 +323,22 @@ func (a *App) GetTrayState() platform.TrayState {
 // GetLocalIPAddresses returns IPv4 addresses from active local network adapters.
 func (a *App) GetLocalIPAddresses() ([]string, error) {
 	return platform.LocalIPAddresses()
+}
+
+func (a *App) trayActions() platform.TrayActions {
+	return platform.TrayActions{
+		ShowWindow:      a.ShowWindow,
+		StartServer:     a.StartServer,
+		StopServer:      a.StopServer,
+		Quit:            a.QuitApp,
+		IsServerRunning: func() bool { return a.GetServerStatus().Running },
+		LocalIPs: func() []string {
+			ips, _ := platform.LocalIPAddresses()
+			return ips
+		},
+		SOCKS5Addr: func() string { return a.GetServerStatus().SOCKS5Addr },
+		HTTPAddr:   func() string { return a.GetServerStatus().HTTPAddr },
+	}
 }
 
 // ShowWindow restores the main window from the tray/background state.
@@ -474,7 +502,8 @@ func (a *App) emitStatusLocked() {
 	}
 	status := a.server.Status()
 	if a.tray != nil {
-		a.tray.SetServerRunning(status.Running)
+		ips, _ := platform.LocalIPAddresses()
+		a.tray.SetServerStatus(status.Running, ips, status.SOCKS5Addr, status.HTTPAddr)
 	}
 	runtime.EventsEmit(a.ctx, "proxy:status", status)
 }

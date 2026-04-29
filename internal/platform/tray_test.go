@@ -6,7 +6,7 @@ import (
 )
 
 func TestTrayManagerStateAndCloseBehavior(t *testing.T) {
-	tray := NewTrayManager(true)
+	tray := NewTrayManager(true, true, true)
 	tray.window = noopWindowOps{}
 	tray.Startup(context.Background())
 
@@ -32,10 +32,18 @@ func TestTrayManagerStateAndCloseBehavior(t *testing.T) {
 }
 
 func TestTrayManagerDisabledDoesNotPreventClose(t *testing.T) {
-	tray := NewTrayManager(false)
+	tray := NewTrayManager(false, false, false)
 	tray.window = noopWindowOps{}
 	if tray.BeforeClose(context.Background()) {
 		t.Fatal("expected disabled tray to allow window close")
+	}
+}
+
+func TestTrayManagerCloseToTrayDisabledDoesNotPreventClose(t *testing.T) {
+	tray := NewTrayManager(true, false, true)
+	tray.window = noopWindowOps{}
+	if tray.BeforeClose(context.Background()) {
+		t.Fatal("expected close-to-tray disabled to allow window close")
 	}
 }
 

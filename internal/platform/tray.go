@@ -25,6 +25,9 @@ type TrayActions struct {
 	StopServer      func() error
 	Quit            func()
 	IsServerRunning func() bool
+	LocalIPs        func() []string
+	SOCKS5Addr      func() string
+	HTTPAddr        func() string
 }
 
 // TrayManager centralizes desktop window actions that differ by platform.
@@ -32,20 +35,27 @@ type TrayManager struct {
 	mu            sync.Mutex
 	ctx           context.Context
 	enabled       bool
+	closeToTray   bool
+	showStatusIP  bool
 	visible       bool
 	quit          bool
 	nativeStarted bool
 	serverRunning bool
+	localIPs      []string
+	socksAddr     string
+	httpAddr      string
 	actions       TrayActions
 	window        windowOps
 }
 
 // NewTrayManager creates a tray manager with platform defaults.
-func NewTrayManager(enabled bool) *TrayManager {
+func NewTrayManager(enabled, closeToTray, showStatusIP bool) *TrayManager {
 	return &TrayManager{
-		enabled: enabled,
-		visible: true,
-		window:  wailsWindowOps{},
+		enabled:      enabled,
+		closeToTray:  closeToTray,
+		showStatusIP: showStatusIP,
+		visible:      true,
+		window:       wailsWindowOps{},
 	}
 }
 
@@ -59,14 +69,19 @@ func (t *TrayManager) Startup(ctx context.Context) {
 // StartNative creates the platform tray icon and menu when supported.
 func (t *TrayManager) StartNative(icon []byte, actions TrayActions) {
 	t.mu.Lock()
+	t.actions = actions
 	if !t.enabled || t.nativeStarted {
 		t.mu.Unlock()
 		return
 	}
-	t.actions = actions
 	t.nativeStarted = true
 	t.mu.Unlock()
 	t.startNativeTray(icon)
+}
+
+// StopNative removes the platform tray icon when it is running.
+func (t *TrayManager) StopNative() {
+	t.stopNativeTray()
 }
 
 // SetEnabled updates whether close-to-tray behavior is active.
@@ -74,6 +89,22 @@ func (t *TrayManager) SetEnabled(enabled bool) {
 	t.mu.Lock()
 	t.enabled = enabled
 	t.mu.Unlock()
+	t.updateNativeTray()
+}
+
+// SetCloseToTray updates whether closing the window should hide it to tray.
+func (t *TrayManager) SetCloseToTray(enabled bool) {
+	t.mu.Lock()
+	t.closeToTray = enabled
+	t.mu.Unlock()
+}
+
+// SetStatusIPVisible updates native tray status/IP menu visibility.
+func (t *TrayManager) SetStatusIPVisible(enabled bool) {
+	t.mu.Lock()
+	t.showStatusIP = enabled
+	t.mu.Unlock()
+	t.updateNativeTray()
 }
 
 // ShowWindow restores the main window.
@@ -116,7 +147,7 @@ func (t *TrayManager) RequestQuit() {
 // BeforeClose implements close-to-tray when the tray integration is enabled.
 func (t *TrayManager) BeforeClose(ctx context.Context) bool {
 	t.mu.Lock()
-	if t.quit || !t.enabled {
+	if t.quit || !t.enabled || !t.closeToTray {
 		t.mu.Unlock()
 		return false
 	}
@@ -145,6 +176,17 @@ func (t *TrayManager) State() TrayState {
 func (t *TrayManager) SetServerRunning(running bool) {
 	t.mu.Lock()
 	t.serverRunning = running
+	t.mu.Unlock()
+	t.updateNativeTray()
+}
+
+// SetServerStatus updates the tray status snapshot without calling back into App.
+func (t *TrayManager) SetServerStatus(running bool, localIPs []string, socksAddr, httpAddr string) {
+	t.mu.Lock()
+	t.serverRunning = running
+	t.localIPs = append(t.localIPs[:0], localIPs...)
+	t.socksAddr = socksAddr
+	t.httpAddr = httpAddr
 	t.mu.Unlock()
 	t.updateNativeTray()
 }

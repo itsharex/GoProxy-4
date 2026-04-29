@@ -27,7 +27,10 @@ export interface UIConfig {
   theme: 'light' | 'dark' | 'auto'
   language: string
   startMinimized: boolean
+  autoStartProxy: boolean
   showTrayIcon: boolean
+  closeToTray: boolean
+  trayStatusAndIp: boolean
 }
 
 export interface AppConfig {

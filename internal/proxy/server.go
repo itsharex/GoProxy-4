@@ -14,6 +14,8 @@ import (
 	"gitee.com/jiuhuidalan1/goproxy/internal/stats"
 )
 
+const serverStopGracePeriod = 3 * time.Second
+
 // Status describes the current proxy server runtime state.
 type Status struct {
 	Running     bool   `json:"running"`
@@ -70,6 +72,8 @@ type Server struct {
 
 	acceptWg sync.WaitGroup
 	connWg   sync.WaitGroup
+
+	stopGracePeriod time.Duration
 }
 
 // NewServer creates a proxy server from validated runtime config.
@@ -84,6 +88,8 @@ func NewServer(cfg config.Config, collector *stats.Collector) *Server {
 		auth:      NewAuthManager(cfg.Auth),
 		sem:       make(chan struct{}, cfg.Relay.MaxConnections),
 		conns:     make(map[net.Conn]*trackedConn, mapSize),
+
+		stopGracePeriod: serverStopGracePeriod,
 	}
 }
 
@@ -135,7 +141,7 @@ func (s *Server) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop closes listeners and active connections, then waits for goroutines to exit.
+// Stop closes listeners and active connections, then waits briefly for goroutines to exit.
 func (s *Server) Stop() error {
 	s.mu.Lock()
 	if !s.running {
@@ -159,12 +165,18 @@ func (s *Server) Stop() error {
 		_ = listener.Close()
 	}
 
-	s.acceptWg.Wait()
-
 	for _, conn := range s.activeConnections() {
 		closeConn(conn)
 	}
-	s.connWg.Wait()
+
+	gracePeriod := s.stopGracePeriod
+	_ = waitGroupWithTimeout(&s.acceptWg, gracePeriod)
+	if !waitGroupWithTimeout(&s.connWg, gracePeriod) {
+		for _, conn := range s.activeConnections() {
+			closeConn(conn)
+		}
+		_ = waitGroupWithTimeout(&s.connWg, 500*time.Millisecond)
+	}
 	s.cancelMemoryTrim()
 	debug.FreeOSMemory()
 
@@ -377,6 +389,26 @@ func (s *Server) activeConnections() []net.Conn {
 		conns = append(conns, conn)
 	}
 	return conns
+}
+
+func waitGroupWithTimeout(wg *sync.WaitGroup, timeout time.Duration) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	if timeout <= 0 {
+		<-done
+		return true
+	}
+
+	select {
+	case <-done:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 func (s *Server) scheduleMemoryTrim() {

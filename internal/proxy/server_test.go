@@ -3,8 +3,8 @@ package proxy
 import (
 	"bufio"
 	"context"
-	"encoding/binary"
 	"encoding/base64"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"net"
@@ -283,6 +283,32 @@ func TestServerStartStop(t *testing.T) {
 
 	if err := server.Stop(); err != nil {
 		t.Fatalf("stop server: %v", err)
+	}
+	if server.Status().Running {
+		t.Fatal("expected server to be stopped")
+	}
+}
+
+func TestServerStopReturnsWhenConnectionWorkerDoesNotExit(t *testing.T) {
+	server := NewServer(testConfig(0, freePort(t), 8), stats.NewCollector())
+	server.stopGracePeriod = 20 * time.Millisecond
+
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	server.registerConn("http", conn)
+	server.connWg.Add(1)
+	server.mu.Lock()
+	server.running = true
+	server.cancel = func() {}
+	server.mu.Unlock()
+
+	started := time.Now()
+	if err := server.Stop(); err != nil {
+		t.Fatalf("stop server: %v", err)
+	}
+	server.connWg.Done()
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("stop took too long: %s", elapsed)
 	}
 	if server.Status().Running {
 		t.Fatal("expected server to be stopped")

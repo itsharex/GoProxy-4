@@ -52,10 +52,13 @@ type LogConfig struct {
 
 // UIConfig contains desktop UI preferences.
 type UIConfig struct {
-	Theme          string `yaml:"theme" json:"theme"`
-	Language       string `yaml:"language" json:"language"`
-	StartMinimized bool   `yaml:"start_minimized" json:"startMinimized"`
-	ShowTrayIcon   bool   `yaml:"show_tray_icon" json:"showTrayIcon"`
+	Theme           string `yaml:"theme" json:"theme"`
+	Language        string `yaml:"language" json:"language"`
+	StartMinimized  bool   `yaml:"start_minimized" json:"startMinimized"`
+	AutoStartProxy  bool   `yaml:"auto_start_proxy" json:"autoStartProxy"`
+	ShowTrayIcon    bool   `yaml:"show_tray_icon" json:"showTrayIcon"`
+	CloseToTray     bool   `yaml:"close_to_tray" json:"closeToTray"`
+	TrayStatusAndIP bool   `yaml:"tray_status_and_ip" json:"trayStatusAndIp"`
 }
 
 // Default returns a validated baseline configuration.
@@ -90,10 +93,13 @@ func Default() Config {
 			Output:     "both",
 		},
 		UI: UIConfig{
-			Theme:          "auto",
-			Language:       "zh-CN",
-			StartMinimized: false,
-			ShowTrayIcon:   true,
+			Theme:           "auto",
+			Language:        "zh-CN",
+			StartMinimized:  false,
+			AutoStartProxy:  true,
+			ShowTrayIcon:    true,
+			CloseToTray:     true,
+			TrayStatusAndIP: true,
 		},
 	}
 }

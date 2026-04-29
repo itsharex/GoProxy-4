@@ -20,6 +20,7 @@ import ActiveConnectionsPage from './pages/ActiveConnectionsPage.vue'
 import AuthPage from './pages/AuthPage.vue'
 import ConfigPage from './pages/ConfigPage.vue'
 import LogsPage from './pages/LogsPage.vue'
+import SettingsPage from './pages/SettingsPage.vue'
 import StatsPage from './pages/StatsPage.vue'
 import { useConfigStore } from './stores/config'
 import { useLogStore } from './stores/logs'
@@ -54,7 +55,7 @@ const navGroups: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { key: 'config', label: '服务配置', icon: SlidersHorizontal },
       { key: 'auth', label: '认证管理', icon: Shield },
-      { key: 'settings', label: '应用设置', icon: Settings, disabled: true }
+      { key: 'settings', label: '应用设置', icon: Settings }
     ]
   }
 ]
@@ -159,13 +160,6 @@ onMounted(async () => {
                 <strong>ProxyServer</strong>
                 <small>v1.0.0</small>
               </div>
-              <div class="ip-panel">
-                <span class="ip-title">网卡 IP</span>
-                <div v-if="localIPs.length > 0" class="ip-list">
-                  <span v-for="ip in localIPs" :key="ip" class="ip-chip" :title="ip">{{ ip }}</span>
-                </div>
-                <span v-else class="ip-empty">{{ localIPLabel }}</span>
-              </div>
             </div>
 
             <nav class="nav">
@@ -186,16 +180,16 @@ onMounted(async () => {
             </nav>
 
             <div class="nav-status">
+              <div class="status-pill" :class="{ stopped: !server.status.running }">
+                <span class="blink" />
+                <span>{{ server.status.running ? '服务运行中' : '服务已停止' }}</span>
+              </div>
               <div class="ip-panel">
                 <span class="ip-title">网卡 IP</span>
                 <div v-if="localIPs.length > 0" class="ip-list">
                   <span v-for="ip in localIPs" :key="ip" class="ip-chip" :title="ip">{{ ip }}</span>
                 </div>
                 <span v-else class="ip-empty">{{ localIPLabel }}</span>
-              </div>
-              <div class="status-pill" :class="{ stopped: !server.status.running }">
-                <span class="blink" />
-                <span>{{ server.status.running ? '服务运行中' : '服务已停止' }}</span>
               </div>
             </div>
           </aside>
@@ -231,6 +225,7 @@ onMounted(async () => {
               <LogsPage v-else-if="activePage === 'logs'" />
               <StatsPage v-else-if="activePage === 'stats'" />
               <AuthPage v-else-if="activePage === 'auth'" />
+              <SettingsPage v-else-if="activePage === 'settings'" />
               <ConfigPage v-else />
             </div>
           </main>
