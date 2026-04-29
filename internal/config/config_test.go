@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func TestDefaultConfigIsValid(t *testing.T) {
@@ -100,28 +102,28 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 				cfg.Server.SOCKS5.Enabled = false
 				cfg.Server.HTTP.Enabled = false
 			},
-			want: "at least one inbound protocol",
+			want: "至少开启一种",
 		},
 		{
 			name: "invalid port",
 			edit: func(cfg *Config) {
 				cfg.Server.SOCKS5.Port = 0
 			},
-			want: "port must be between",
+			want: "端口必须",
 		},
 		{
 			name: "invalid host",
 			edit: func(cfg *Config) {
 				cfg.Server.SOCKS5.Host = "localhost"
 			},
-			want: "host must be an IP address",
+			want: "监听地址必须是 IP 地址",
 		},
 		{
 			name: "invalid max connections",
 			edit: func(cfg *Config) {
 				cfg.Relay.MaxConnections = 0
 			},
-			want: "max_connections",
+			want: "最大并发连接数",
 		},
 		{
 			name: "duplicate listeners",
@@ -131,7 +133,38 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 				cfg.Server.SOCKS5.Port = 9000
 				cfg.Server.HTTP.Port = 9000
 			},
-			want: "same address",
+			want: "不能使用完全相同",
+		},
+		{
+			name: "auth enabled without users",
+			edit: func(cfg *Config) {
+				cfg.Auth.Enabled = true
+				cfg.Auth.Users = nil
+			},
+			want: "新增至少一个认证用户",
+		},
+		{
+			name: "duplicate auth users",
+			edit: func(cfg *Config) {
+				hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
+				if err != nil {
+					t.Fatalf("hash password: %v", err)
+				}
+				cfg.Auth.Enabled = true
+				cfg.Auth.Users = []AuthUser{
+					{Username: "alice", Password: string(hash)},
+					{Username: "alice", Password: string(hash)},
+				}
+			},
+			want: "重复",
+		},
+		{
+			name: "auth password must be bcrypt",
+			edit: func(cfg *Config) {
+				cfg.Auth.Enabled = true
+				cfg.Auth.Users = []AuthUser{{Username: "alice", Password: "plain"}}
+			},
+			want: "密码格式无效",
 		},
 	}
 

@@ -24,4 +24,26 @@ func TestCollectorSnapshot(t *testing.T) {
 	if snapshot.DownloadBytes != 34 {
 		t.Fatalf("expected download bytes 34, got %d", snapshot.DownloadBytes)
 	}
+
+	ticked := collector.Tick()
+	if ticked.UploadRate != 12 {
+		t.Fatalf("expected upload rate 12, got %d", ticked.UploadRate)
+	}
+	if ticked.DownloadRate != 34 {
+		t.Fatalf("expected download rate 34, got %d", ticked.DownloadRate)
+	}
+
+	collector.AddUpload(8)
+	collector.AddDownload(6)
+	collector.AuthFailed()
+	ticked = collector.Tick()
+	if ticked.UploadRate != 8 {
+		t.Fatalf("expected upload rate 8, got %d", ticked.UploadRate)
+	}
+	if ticked.DownloadRate != 6 {
+		t.Fatalf("expected download rate 6, got %d", ticked.DownloadRate)
+	}
+	if ticked.AuthFailures != 1 {
+		t.Fatalf("expected auth failures 1, got %d", ticked.AuthFailures)
+	}
 }

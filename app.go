@@ -2,10 +2,14 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
+	"strings"
 	"sync"
+	"time"
 
 	"gitee.com/jiuhuidalan1/goproxy/internal/config"
 	"gitee.com/jiuhuidalan1/goproxy/internal/logger"
@@ -17,6 +21,9 @@ import (
 )
 
 const appSource = "app"
+
+//go:embed build/windows/icon.ico
+var trayIcon []byte
 
 // App is the Wails binding layer between the desktop UI and backend services.
 type App struct {
@@ -33,6 +40,7 @@ type App struct {
 	runtimeCfg config.Config
 	collector  *stats.Collector
 	server     *proxy.Server
+	tray       *platform.TrayManager
 }
 
 // NewApp creates the desktop application using platform-specific paths.
@@ -77,18 +85,30 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 		runtimeCfg:    cfg,
 		collector:     collector,
 		server:        proxy.NewServer(cfg, collector),
+		tray:          platform.NewTrayManager(cfg.UI.ShowTrayIcon),
 	}, nil
 }
 
 func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
+	if a.tray != nil {
+		a.tray.Startup(ctx)
+		a.tray.StartNative(trayIcon, platform.TrayActions{
+			ShowWindow:      a.ShowWindow,
+			StartServer:     a.StartServer,
+			StopServer:      a.StopServer,
+			Quit:            a.QuitApp,
+			IsServerRunning: func() bool { return a.GetServerStatus().Running },
+		})
+	}
 	if a.logger != nil {
 		a.subscribeLoggerLocked(a.logger)
 		a.logger.Info(appSource, "应用已启动", zap.String("configPath", a.configPath))
 	}
 	a.emitStatusLocked()
 	a.mu.Unlock()
+	go a.emitStatsLoop(ctx)
 }
 
 func (a *App) shutdown(ctx context.Context) {
@@ -141,6 +161,9 @@ func (a *App) SaveConfig(cfg config.Config) error {
 	}
 
 	a.cfg = cfg
+	if a.tray != nil {
+		a.tray.SetEnabled(cfg.UI.ShowTrayIcon)
+	}
 	if newLogger != nil {
 		oldLogger := a.logger
 		a.logger = newLogger
@@ -153,6 +176,9 @@ func (a *App) SaveConfig(cfg config.Config) error {
 		a.collector = stats.NewCollector()
 		a.server = proxy.NewServer(cfg, a.collector)
 		a.runtimeCfg = cfg
+	} else if !reflect.DeepEqual(oldCfg.Auth, cfg.Auth) && a.server != nil {
+		a.server.SetAuthConfig(cfg.Auth)
+		a.runtimeCfg.Auth = cfg.Auth
 	}
 
 	if a.logger != nil {
@@ -267,11 +293,207 @@ func (a *App) GetRecentLogs(n int) []logger.Entry {
 	return a.logger.Recent(n)
 }
 
+// GetTrayState returns the current tray/window integration state.
+func (a *App) GetTrayState() platform.TrayState {
+	a.mu.Lock()
+	tray := a.tray
+	a.mu.Unlock()
+	if tray == nil {
+		return platform.TrayState{}
+	}
+	return tray.State()
+}
+
+// GetLocalIPAddresses returns IPv4 addresses from active local network adapters.
+func (a *App) GetLocalIPAddresses() ([]string, error) {
+	return platform.LocalIPAddresses()
+}
+
+// ShowWindow restores the main window from the tray/background state.
+func (a *App) ShowWindow() {
+	a.mu.Lock()
+	tray := a.tray
+	a.mu.Unlock()
+	if tray != nil {
+		tray.ShowWindow()
+	}
+}
+
+// HideToTray hides the main window when tray integration is enabled.
+func (a *App) HideToTray() {
+	a.mu.Lock()
+	tray := a.tray
+	a.mu.Unlock()
+	if tray != nil {
+		tray.HideWindow()
+	}
+}
+
+// QuitApp exits the desktop application from the tray/menu command path.
+func (a *App) QuitApp() {
+	a.mu.Lock()
+	tray := a.tray
+	a.mu.Unlock()
+	if tray != nil {
+		tray.RequestQuit()
+		return
+	}
+	if a.ctx != nil {
+		runtime.Quit(a.ctx)
+	}
+}
+
+// SetAuthEnabled enables or disables proxy authentication.
+func (a *App) SetAuthEnabled(enabled bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cfg := a.cfg
+	cfg.Auth.Enabled = enabled
+	return a.saveAuthConfigLocked(cfg)
+}
+
+// AddUser creates a bcrypt-backed proxy user.
+func (a *App) AddUser(username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("请输入用户名")
+	}
+	if password == "" {
+		return errors.New("请输入密码")
+	}
+
+	hash, err := proxy.HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cfg := a.cfg
+	for _, user := range cfg.Auth.Users {
+		if user.Username == username {
+			return fmt.Errorf("用户 %q 已存在，请换一个用户名", username)
+		}
+	}
+	cfg.Auth.Users = append(cfg.Auth.Users, config.AuthUser{Username: username, Password: hash})
+	return a.saveAuthConfigLocked(cfg)
+}
+
+// RemoveUser deletes a proxy user by username.
+func (a *App) RemoveUser(username string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("请输入用户名")
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cfg := a.cfg
+	next := cfg.Auth.Users[:0]
+	found := false
+	for _, user := range cfg.Auth.Users {
+		if user.Username == username {
+			found = true
+			continue
+		}
+		next = append(next, user)
+	}
+	if !found {
+		return fmt.Errorf("用户 %q 不存在", username)
+	}
+	cfg.Auth.Users = next
+	return a.saveAuthConfigLocked(cfg)
+}
+
+// ResetUserPassword replaces a user's bcrypt password hash.
+func (a *App) ResetUserPassword(username, password string) error {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return errors.New("请输入用户名")
+	}
+	if password == "" {
+		return errors.New("请输入密码")
+	}
+
+	hash, err := proxy.HashPassword(password)
+	if err != nil {
+		return err
+	}
+
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	cfg := a.cfg
+	found := false
+	for index := range cfg.Auth.Users {
+		if cfg.Auth.Users[index].Username == username {
+			cfg.Auth.Users[index].Password = hash
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("用户 %q 不存在", username)
+	}
+	return a.saveAuthConfigLocked(cfg)
+}
+
+func (a *App) saveAuthConfigLocked(cfg config.Config) error {
+	if err := a.configManager.Save(cfg); err != nil {
+		return err
+	}
+	a.cfg = cfg
+	if a.server != nil {
+		a.server.SetAuthConfig(cfg.Auth)
+		a.runtimeCfg.Auth = cfg.Auth
+	}
+	a.emitStatusLocked()
+	return nil
+}
+
+func (a *App) beforeClose(ctx context.Context) bool {
+	a.mu.Lock()
+	tray := a.tray
+	a.mu.Unlock()
+	if tray == nil {
+		return false
+	}
+	return tray.BeforeClose(ctx)
+}
+
 func (a *App) emitStatusLocked() {
 	if a.ctx == nil || a.server == nil {
 		return
 	}
-	runtime.EventsEmit(a.ctx, "proxy:status", a.server.Status())
+	status := a.server.Status()
+	if a.tray != nil {
+		a.tray.SetServerRunning(status.Running)
+	}
+	runtime.EventsEmit(a.ctx, "proxy:status", status)
+}
+
+func (a *App) emitStatsLoop(ctx context.Context) {
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			a.mu.Lock()
+			emitCtx := a.ctx
+			server := a.server
+			a.mu.Unlock()
+			if emitCtx == nil || server == nil {
+				continue
+			}
+			runtime.EventsEmit(emitCtx, "proxy:stats", server.TickStats())
+		}
+	}
 }
 
 func (a *App) subscribeLoggerLocked(logManager *logger.Manager) {
@@ -289,5 +511,5 @@ func listenerConfigChanged(a, b config.Config) bool {
 }
 
 func sameRuntimeConfig(a, b config.Config) bool {
-	return a.Server == b.Server && a.Relay == b.Relay
+	return a.Server == b.Server && reflect.DeepEqual(a.Auth, b.Auth) && a.Relay == b.Relay
 }

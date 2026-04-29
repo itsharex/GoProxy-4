@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/binary"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -38,6 +39,55 @@ func TestSOCKS5ConnectDomain(t *testing.T) {
 	defer conn.Close()
 
 	assertEcho(t, conn, "socks-domain")
+}
+
+func TestSOCKS5UsernamePasswordAuth(t *testing.T) {
+	echoAddr := startEchoServer(t)
+	targetHost, targetPort := splitHostPort(t, echoAddr)
+	cfg := testConfig(freePort(t), 0, 8)
+	cfg.Auth = testAuthConfig(t, "alice", "secret")
+
+	server := startTestServer(t, cfg)
+	conn := socks5ConnectWithAuth(t, server.Status().SOCKS5Addr, targetHost, targetPort, socksAddrIPv4, "alice", "secret")
+	defer conn.Close()
+
+	assertEcho(t, conn, "socks-auth")
+}
+
+func TestSOCKS5UsernamePasswordAuthRejectsBadPassword(t *testing.T) {
+	cfg := testConfig(freePort(t), 0, 8)
+	cfg.Auth = testAuthConfig(t, "alice", "secret")
+	server := startTestServer(t, cfg)
+
+	conn, err := net.Dial("tcp", server.Status().SOCKS5Addr)
+	if err != nil {
+		t.Fatalf("dial socks proxy: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := conn.Write([]byte{socksVersion5, 1, socksMethodUserPass}); err != nil {
+		t.Fatalf("write socks greeting: %v", err)
+	}
+	greeting := make([]byte, 2)
+	if _, err := io.ReadFull(conn, greeting); err != nil {
+		t.Fatalf("read socks greeting: %v", err)
+	}
+	if greeting[1] != socksMethodUserPass {
+		t.Fatalf("expected user/pass method, got %v", greeting)
+	}
+	if _, err := conn.Write([]byte{socksAuthVersion, 5, 'a', 'l', 'i', 'c', 'e', 3, 'b', 'a', 'd'}); err != nil {
+		t.Fatalf("write socks auth: %v", err)
+	}
+	authResp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, authResp); err != nil {
+		t.Fatalf("read socks auth response: %v", err)
+	}
+	if authResp[1] != socksAuthStatusDenied {
+		t.Fatalf("expected auth denial, got %v", authResp)
+	}
+	if got := server.Stats().AuthFailures; got != 1 {
+		t.Fatalf("expected auth failures 1, got %d", got)
+	}
 }
 
 func TestHTTPConnect(t *testing.T) {
@@ -84,6 +134,62 @@ func TestHTTPConnect(t *testing.T) {
 		t.Fatalf("write tunnel data: %v", err)
 	}
 	readExact(t, reader, "http-connect")
+}
+
+func TestHTTPConnectBasicAuth(t *testing.T) {
+	echoAddr := startEchoServer(t)
+	cfg := testConfig(0, freePort(t), 8)
+	cfg.Auth = testAuthConfig(t, "alice", "secret")
+	server := startTestServer(t, cfg)
+
+	conn, err := net.Dial("tcp", server.Status().HTTPAddr)
+	if err != nil {
+		t.Fatalf("dial http proxy: %v", err)
+	}
+	defer conn.Close()
+
+	credential := base64.StdEncoding.EncodeToString([]byte("alice:secret"))
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\nProxy-Authorization: Basic %s\r\n\r\n", echoAddr, echoAddr, credential); err != nil {
+		t.Fatalf("write connect request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read http connect status: %v", err)
+	}
+	if !strings.Contains(statusLine, "200") {
+		t.Fatalf("expected 200 status, got %q", statusLine)
+	}
+}
+
+func TestHTTPConnectBasicAuthRequired(t *testing.T) {
+	echoAddr := startEchoServer(t)
+	cfg := testConfig(0, freePort(t), 8)
+	cfg.Auth = testAuthConfig(t, "alice", "secret")
+	server := startTestServer(t, cfg)
+
+	conn, err := net.Dial("tcp", server.Status().HTTPAddr)
+	if err != nil {
+		t.Fatalf("dial http proxy: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := fmt.Fprintf(conn, "CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", echoAddr, echoAddr); err != nil {
+		t.Fatalf("write connect request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("read http connect status: %v", err)
+	}
+	if !strings.Contains(statusLine, "407") {
+		t.Fatalf("expected 407 status, got %q", statusLine)
+	}
+	if got := server.Stats().AuthFailures; got != 1 {
+		t.Fatalf("expected auth failures 1, got %d", got)
+	}
 }
 
 func TestHTTPConnectWithoutHostHeader(t *testing.T) {
@@ -255,6 +361,21 @@ func testConfig(socksPort, httpPort, maxConns int) config.Config {
 	return cfg
 }
 
+func testAuthConfig(t *testing.T, username, password string) config.AuthConfig {
+	t.Helper()
+
+	hash, err := HashPassword(password)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	return config.AuthConfig{
+		Enabled: true,
+		Users: []config.AuthUser{
+			{Username: username, Password: hash},
+		},
+	}
+}
+
 func freePort(t *testing.T) int {
 	t.Helper()
 
@@ -333,6 +454,90 @@ func socks5Connect(t *testing.T, proxyAddr, targetHost string, targetPort int, a
 	}
 	if greeting[0] != socksVersion5 || greeting[1] != socksMethodNoAuth {
 		t.Fatalf("unexpected socks greeting response: %v", greeting)
+	}
+
+	request := []byte{socksVersion5, socksCmdConnect, 0x00, atyp}
+	switch atyp {
+	case socksAddrIPv4:
+		ip := net.ParseIP(targetHost).To4()
+		if ip == nil {
+			t.Fatalf("target host is not ipv4: %s", targetHost)
+		}
+		request = append(request, ip...)
+	case socksAddrDomain:
+		if len(targetHost) > 255 {
+			t.Fatalf("target host too long: %s", targetHost)
+		}
+		request = append(request, byte(len(targetHost)))
+		request = append(request, []byte(targetHost)...)
+	default:
+		t.Fatalf("unsupported test atyp: %d", atyp)
+	}
+	portBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(portBytes, uint16(targetPort))
+	request = append(request, portBytes...)
+
+	if _, err := conn.Write(request); err != nil {
+		t.Fatalf("write socks request: %v", err)
+	}
+
+	header := make([]byte, 4)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		t.Fatalf("read socks response header: %v", err)
+	}
+	if header[1] != socksReplySucceeded {
+		t.Fatalf("expected socks success reply, got %d", header[1])
+	}
+	switch header[3] {
+	case socksAddrIPv4:
+		_, err = io.ReadFull(conn, make([]byte, net.IPv4len+2))
+	case socksAddrIPv6:
+		_, err = io.ReadFull(conn, make([]byte, net.IPv6len+2))
+	default:
+		t.Fatalf("unexpected socks response address type: %d", header[3])
+	}
+	if err != nil {
+		t.Fatalf("read socks response address: %v", err)
+	}
+
+	return conn
+}
+
+func socks5ConnectWithAuth(t *testing.T, proxyAddr, targetHost string, targetPort int, atyp byte, username, password string) net.Conn {
+	t.Helper()
+
+	conn, err := net.Dial("tcp", proxyAddr)
+	if err != nil {
+		t.Fatalf("dial socks proxy: %v", err)
+	}
+
+	if _, err := conn.Write([]byte{socksVersion5, 1, socksMethodUserPass}); err != nil {
+		t.Fatalf("write socks greeting: %v", err)
+	}
+	greeting := make([]byte, 2)
+	if _, err := io.ReadFull(conn, greeting); err != nil {
+		t.Fatalf("read socks greeting: %v", err)
+	}
+	if greeting[0] != socksVersion5 || greeting[1] != socksMethodUserPass {
+		t.Fatalf("unexpected socks greeting response: %v", greeting)
+	}
+
+	if len(username) > 255 || len(password) > 255 {
+		t.Fatal("test credentials too long")
+	}
+	auth := []byte{socksAuthVersion, byte(len(username))}
+	auth = append(auth, []byte(username)...)
+	auth = append(auth, byte(len(password)))
+	auth = append(auth, []byte(password)...)
+	if _, err := conn.Write(auth); err != nil {
+		t.Fatalf("write socks auth: %v", err)
+	}
+	authResp := make([]byte, 2)
+	if _, err := io.ReadFull(conn, authResp); err != nil {
+		t.Fatalf("read socks auth response: %v", err)
+	}
+	if authResp[0] != socksAuthVersion || authResp[1] != socksAuthStatusOK {
+		t.Fatalf("unexpected socks auth response: %v", authResp)
 	}
 
 	request := []byte{socksVersion5, socksCmdConnect, 0x00, atyp}

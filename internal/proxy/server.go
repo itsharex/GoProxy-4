@@ -49,6 +49,7 @@ type trackedConn struct {
 type Server struct {
 	cfg       config.Config
 	collector *stats.Collector
+	auth      *AuthManager
 
 	mu        sync.RWMutex
 	running   bool
@@ -80,6 +81,7 @@ func NewServer(cfg config.Config, collector *stats.Collector) *Server {
 	return &Server{
 		cfg:       cfg,
 		collector: collector,
+		auth:      NewAuthManager(cfg.Auth),
 		sem:       make(chan struct{}, cfg.Relay.MaxConnections),
 		conns:     make(map[net.Conn]*trackedConn, mapSize),
 	}
@@ -192,6 +194,19 @@ func (s *Server) Status() Status {
 // Stats returns the current collector snapshot.
 func (s *Server) Stats() stats.Stats {
 	return s.collector.Snapshot()
+}
+
+// TickStats computes rate fields and returns the latest collector snapshot.
+func (s *Server) TickStats() stats.Stats {
+	return s.collector.Tick()
+}
+
+// SetAuthConfig updates authentication for newly processed requests.
+func (s *Server) SetAuthConfig(cfg config.AuthConfig) {
+	s.mu.Lock()
+	s.cfg.Auth = cfg
+	s.auth = NewAuthManager(cfg)
+	s.mu.Unlock()
 }
 
 // ActiveConnections returns current active connection metadata.
@@ -338,6 +353,18 @@ func (s *Server) addDownload(item *trackedConn, n int64) {
 	s.collector.AddDownload(n)
 	if item != nil {
 		item.downloadBytes.Add(n)
+	}
+}
+
+func (s *Server) authenticator() *AuthManager {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.auth
+}
+
+func (s *Server) recordAuthFailure() {
+	if s.collector != nil {
+		s.collector.AuthFailed()
 	}
 }
 

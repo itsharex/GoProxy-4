@@ -4,10 +4,15 @@ import {proxy} from '../models';
 import {config} from '../models';
 import {logger} from '../models';
 import {stats} from '../models';
+import {platform} from '../models';
+
+export function AddUser(arg1:string,arg2:string):Promise<void>;
 
 export function GetActiveConnections():Promise<Array<proxy.ConnectionSnapshot>>;
 
 export function GetConfig():Promise<config.Config>;
+
+export function GetLocalIPAddresses():Promise<Array<string>>;
 
 export function GetRecentLogs(arg1:number):Promise<Array<logger.Entry>>;
 
@@ -15,7 +20,21 @@ export function GetServerStatus():Promise<proxy.Status>;
 
 export function GetStats():Promise<stats.Stats>;
 
+export function GetTrayState():Promise<platform.TrayState>;
+
+export function HideToTray():Promise<void>;
+
+export function QuitApp():Promise<void>;
+
+export function RemoveUser(arg1:string):Promise<void>;
+
+export function ResetUserPassword(arg1:string,arg2:string):Promise<void>;
+
 export function SaveConfig(arg1:config.Config):Promise<void>;
+
+export function SetAuthEnabled(arg1:boolean):Promise<void>;
+
+export function ShowWindow():Promise<void>;
 
 export function StartServer():Promise<void>;
 

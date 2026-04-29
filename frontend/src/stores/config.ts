@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getConfig, saveConfig } from '../backend/api'
 import type { AppConfig } from '../types'
+import { friendlyError } from '../utils/errors'
 
 function cloneConfig(config: AppConfig): AppConfig {
   return JSON.parse(JSON.stringify(config)) as AppConfig
@@ -38,7 +39,7 @@ export const useConfigStore = defineStore('config', () => {
       draft.value = cloneConfig(config)
       restartRequired.value = false
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err)
+      error.value = friendlyError(err)
     } finally {
       loading.value = false
     }
@@ -54,7 +55,7 @@ export const useConfigStore = defineStore('config', () => {
       current.value = cloneConfig(draft.value)
       restartRequired.value = needsRestart
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err)
+      error.value = friendlyError(err)
       throw err
     } finally {
       saving.value = false

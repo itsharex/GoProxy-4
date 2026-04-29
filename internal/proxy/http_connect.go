@@ -3,6 +3,8 @@ package proxy
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -25,11 +27,47 @@ func (s *Server) handleHTTPConnect(ctx context.Context, conn net.Conn) error {
 	}
 	defer req.Body.Close()
 
+	if !s.authenticateHTTPProxy(conn, req) {
+		return errors.New("http proxy authentication failed")
+	}
+
 	if req.Method == http.MethodConnect {
 		return s.handleHTTPTunnel(ctx, conn, reader, req, timeout)
 	}
 
 	return s.handleHTTPForward(ctx, conn, reader, req, timeout)
+}
+
+func (s *Server) authenticateHTTPProxy(conn net.Conn, req *http.Request) bool {
+	auth := s.authenticator()
+	if !auth.Enabled() {
+		return true
+	}
+
+	username, password, ok := parseProxyBasicAuth(req.Header.Get("Proxy-Authorization"))
+	if ok && auth.Validate(username, password) {
+		return true
+	}
+
+	s.recordAuthFailure()
+	_, _ = conn.Write([]byte("HTTP/1.1 407 Proxy Authentication Required\r\nProxy-Authenticate: Basic realm=\"ProxyServer\"\r\nConnection: close\r\nContent-Length: 0\r\n\r\n"))
+	return false
+}
+
+func parseProxyBasicAuth(header string) (string, string, bool) {
+	const prefix = "Basic "
+	if len(header) < len(prefix) || !strings.EqualFold(header[:len(prefix)], prefix) {
+		return "", "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[len(prefix):]))
+	if err != nil {
+		return "", "", false
+	}
+	username, password, ok := strings.Cut(string(decoded), ":")
+	if !ok {
+		return "", "", false
+	}
+	return username, password, true
 }
 
 func (s *Server) handleHTTPTunnel(ctx context.Context, conn net.Conn, reader *bufio.Reader, req *http.Request, timeout time.Duration) error {

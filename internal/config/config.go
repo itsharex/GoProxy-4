@@ -3,6 +3,7 @@ package config
 // Config contains the proxy server runtime configuration.
 type Config struct {
 	Server ServerConfig `yaml:"server" json:"server"`
+	Auth   AuthConfig   `yaml:"auth" json:"auth"`
 	Relay  RelayConfig  `yaml:"relay" json:"relay"`
 	Log    LogConfig    `yaml:"log" json:"log"`
 	UI     UIConfig     `yaml:"ui" json:"ui"`
@@ -19,6 +20,18 @@ type ProtocolConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Host    string `yaml:"host" json:"host"`
 	Port    int    `yaml:"port" json:"port"`
+}
+
+// AuthConfig contains optional username/password authentication settings.
+type AuthConfig struct {
+	Enabled bool       `yaml:"enabled" json:"enabled"`
+	Users   []AuthUser `yaml:"users" json:"users"`
+}
+
+// AuthUser stores a username and bcrypt password hash.
+type AuthUser struct {
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"password"`
 }
 
 // RelayConfig contains connection relay limits and timeouts.
@@ -59,6 +72,10 @@ func Default() Config {
 				Host:    "0.0.0.0",
 				Port:    8080,
 			},
+		},
+		Auth: AuthConfig{
+			Enabled: false,
+			Users:   []AuthUser{},
 		},
 		Relay: RelayConfig{
 			DialTimeoutSec: 10,

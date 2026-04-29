@@ -32,9 +32,20 @@ export interface UIConfig {
 
 export interface AppConfig {
   server: ServerConfig
+  auth: AuthConfig
   relay: RelayConfig
   log: LogConfig
   ui: UIConfig
+}
+
+export interface AuthConfig {
+  enabled: boolean
+  users: AuthUser[]
+}
+
+export interface AuthUser {
+  username: string
+  password: string
 }
 
 export interface ServerStatus {
@@ -51,6 +62,21 @@ export interface StatsSnapshot {
   totalConns: number
   uploadBytes: number
   downloadBytes: number
+  uploadRate: number
+  downloadRate: number
+  authFailures: number
+}
+
+export interface TrafficSample extends StatsSnapshot {
+  time: string
+}
+
+export interface TrayState {
+  enabled: boolean
+  visible: boolean
+  platform: string
+  supportsMenu: boolean
+  hideDescription: string
 }
 
 export interface ActiveConnection {

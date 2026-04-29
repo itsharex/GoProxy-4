@@ -15,7 +15,12 @@ const (
 	socksVersion5 = 0x05
 
 	socksMethodNoAuth       = 0x00
+	socksMethodUserPass     = 0x02
 	socksMethodNoAcceptable = 0xff
+
+	socksAuthVersion      = 0x01
+	socksAuthStatusOK     = 0x00
+	socksAuthStatusDenied = 0x01
 
 	socksCmdConnect = 0x01
 
@@ -37,7 +42,7 @@ func (s *Server) handleSOCKS5(ctx context.Context, conn net.Conn) error {
 		_ = conn.SetDeadline(time.Now().Add(timeout))
 	}
 
-	if err := negotiateSOCKS5(conn); err != nil {
+	if err := s.negotiateSOCKS5(conn); err != nil {
 		return err
 	}
 
@@ -76,7 +81,7 @@ func (s *Server) handleSOCKS5(ctx context.Context, conn net.Conn) error {
 	return relay(ctx, conn, target, timeout, onUpload, onDownload)
 }
 
-func negotiateSOCKS5(conn net.Conn) error {
+func (s *Server) negotiateSOCKS5(conn net.Conn) error {
 	header := make([]byte, 2)
 	if _, err := io.ReadFull(conn, header); err != nil {
 		return fmt.Errorf("read socks5 greeting: %w", err)
@@ -90,6 +95,21 @@ func negotiateSOCKS5(conn net.Conn) error {
 		return fmt.Errorf("read socks5 methods: %w", err)
 	}
 
+	auth := s.authenticator()
+	if auth.Enabled() {
+		for _, method := range methods {
+			if method == socksMethodUserPass {
+				if _, err := conn.Write([]byte{socksVersion5, socksMethodUserPass}); err != nil {
+					return err
+				}
+				return s.authenticateSOCKS5UserPass(conn, auth)
+			}
+		}
+		_, _ = conn.Write([]byte{socksVersion5, socksMethodNoAcceptable})
+		s.recordAuthFailure()
+		return errors.New("socks5 client did not offer username/password method")
+	}
+
 	for _, method := range methods {
 		if method == socksMethodNoAuth {
 			_, err := conn.Write([]byte{socksVersion5, socksMethodNoAuth})
@@ -99,6 +119,40 @@ func negotiateSOCKS5(conn net.Conn) error {
 
 	_, _ = conn.Write([]byte{socksVersion5, socksMethodNoAcceptable})
 	return errors.New("socks5 client did not offer no-auth method")
+}
+
+func (s *Server) authenticateSOCKS5UserPass(conn net.Conn, auth Authenticator) error {
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		return fmt.Errorf("read socks5 auth header: %w", err)
+	}
+	if header[0] != socksAuthVersion {
+		_, _ = conn.Write([]byte{socksAuthVersion, socksAuthStatusDenied})
+		s.recordAuthFailure()
+		return fmt.Errorf("unsupported socks5 auth version %d", header[0])
+	}
+
+	username := make([]byte, int(header[1]))
+	if _, err := io.ReadFull(conn, username); err != nil {
+		return fmt.Errorf("read socks5 auth username: %w", err)
+	}
+	passLen := []byte{0}
+	if _, err := io.ReadFull(conn, passLen); err != nil {
+		return fmt.Errorf("read socks5 auth password length: %w", err)
+	}
+	password := make([]byte, int(passLen[0]))
+	if _, err := io.ReadFull(conn, password); err != nil {
+		return fmt.Errorf("read socks5 auth password: %w", err)
+	}
+
+	if !auth.Validate(string(username), string(password)) {
+		_, _ = conn.Write([]byte{socksAuthVersion, socksAuthStatusDenied})
+		s.recordAuthFailure()
+		return errors.New("socks5 username/password authentication failed")
+	}
+
+	_, err := conn.Write([]byte{socksAuthVersion, socksAuthStatusOK})
+	return err
 }
 
 func readSOCKS5ConnectRequest(conn net.Conn) (string, error) {

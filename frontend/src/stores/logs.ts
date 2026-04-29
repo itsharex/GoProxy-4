@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getRecentLogs } from '../backend/api'
 import type { LogEntry } from '../types'
+import { friendlyError } from '../utils/errors'
 
 const maxEntries = 1000
 
@@ -31,7 +32,7 @@ export const useLogStore = defineStore('logs', () => {
     try {
       entries.value = await getRecentLogs(maxEntries)
     } catch (err) {
-      error.value = err instanceof Error ? err.message : String(err)
+      error.value = friendlyError(err)
     } finally {
       loading.value = false
     }

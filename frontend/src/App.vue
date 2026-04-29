@@ -13,16 +13,18 @@ import {
   Square,
   Sun
 } from 'lucide-vue-next'
-import { darkTheme, NConfigProvider, NIcon, NMessageProvider } from 'naive-ui'
-import { onEvent } from './backend/api'
+import { darkTheme, NConfigProvider, NDialogProvider, NIcon, NMessageProvider } from 'naive-ui'
+import { getLocalIPAddresses, onEvent } from './backend/api'
 import Dashboard from './pages/Dashboard.vue'
 import ActiveConnectionsPage from './pages/ActiveConnectionsPage.vue'
+import AuthPage from './pages/AuthPage.vue'
 import ConfigPage from './pages/ConfigPage.vue'
 import LogsPage from './pages/LogsPage.vue'
+import StatsPage from './pages/StatsPage.vue'
 import { useConfigStore } from './stores/config'
 import { useLogStore } from './stores/logs'
 import { useServerStore } from './stores/server'
-import type { LogEntry, ServerStatus } from './types'
+import type { LogEntry, ServerStatus, StatsSnapshot } from './types'
 
 type PageKey = 'dashboard' | 'connections' | 'logs' | 'stats' | 'config' | 'auth' | 'settings'
 
@@ -44,14 +46,14 @@ const navGroups: Array<{ title: string; items: NavItem[] }> = [
       { key: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
       { key: 'connections', label: '活跃连接', icon: Network },
       { key: 'logs', label: '实时日志', icon: FileText },
-      { key: 'stats', label: '流量统计', icon: BarChart3, disabled: true }
+      { key: 'stats', label: '流量统计', icon: BarChart3 }
     ]
   },
   {
     title: '管理',
     items: [
       { key: 'config', label: '服务配置', icon: SlidersHorizontal },
-      { key: 'auth', label: '认证管理', icon: Shield, disabled: true },
+      { key: 'auth', label: '认证管理', icon: Shield },
       { key: 'settings', label: '应用设置', icon: Settings, disabled: true }
     ]
   }
@@ -72,6 +74,7 @@ const enabledKeys = navGroups.flatMap((group) => group.items).filter((item) => !
 const activePage = ref<PageKey>(enabledKeys.includes(initialHash) ? initialHash : 'dashboard')
 const systemDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true)
 const serverActionLocked = ref(false)
+const localIPs = ref<string[]>([])
 
 const currentTheme = computed<'dark' | 'light'>(() => {
   const selected = config.draft?.ui.theme ?? 'dark'
@@ -81,9 +84,10 @@ const currentTheme = computed<'dark' | 'light'>(() => {
 
 const naiveTheme = computed(() => (currentTheme.value === 'dark' ? darkTheme : null))
 const activeLabel = computed(() => pageLabels[activePage.value])
-const dashboardListenState = computed(() => (server.status.running ? '监听状态 · RUNNING' : '监听状态 · STOPPED'))
+const dashboardListenState = computed(() => (server.status.running ? '监听状态 / RUNNING' : '监听状态 / STOPPED'))
 const socksChip = computed(() => formatAddr('SOCKS5', server.status.socks5Addr, config.draft?.server.socks5.port))
 const httpChip = computed(() => formatAddr('HTTP', server.status.httpAddr, config.draft?.server.http.port))
+const localIPLabel = computed(() => (localIPs.value.length > 0 ? localIPs.value.join(' / ') : '未检测到网卡 IP'))
 
 function selectPage(item: NavItem) {
   if (item.disabled) return
@@ -92,9 +96,9 @@ function selectPage(item: NavItem) {
 }
 
 function formatAddr(label: string, addr: string, fallbackPort?: number) {
-  if (addr) return `${label} · ${addr}`
-  if (fallbackPort) return `${label} · :${fallbackPort}`
-  return `${label} · -`
+  if (addr) return `${label} / ${addr}`
+  if (fallbackPort) return `${label} / :${fallbackPort}`
+  return `${label} / -`
 }
 
 async function toggleTheme() {
@@ -127,8 +131,14 @@ async function toggleServer() {
 
 onMounted(async () => {
   await Promise.all([config.load(), server.refresh(), logs.load()])
+  try {
+    localIPs.value = await getLocalIPAddresses()
+  } catch {
+    localIPs.value = []
+  }
   onEvent<LogEntry>('proxy:log', logs.append)
   onEvent<ServerStatus>('proxy:status', server.setStatus)
+  onEvent<StatsSnapshot>('proxy:stats', server.setStats)
 
   const media = window.matchMedia?.('(prefers-color-scheme: dark)')
   media?.addEventListener('change', (event) => {
@@ -140,74 +150,92 @@ onMounted(async () => {
 <template>
   <NConfigProvider :theme="naiveTheme">
     <NMessageProvider>
-      <div class="app-shell" :data-theme="currentTheme">
-        <aside class="sidebar">
-          <div class="nav-logo">
-            <span class="live-dot" :class="{ stopped: !server.status.running }" />
-            <div>
-              <strong>ProxyServer</strong>
-              <small>v1.0.0</small>
+      <NDialogProvider>
+        <div class="app-shell" :data-theme="currentTheme">
+          <aside class="sidebar">
+            <div class="nav-logo">
+              <span class="live-dot" :class="{ stopped: !server.status.running }" />
+              <div>
+                <strong>ProxyServer</strong>
+                <small>v1.0.0</small>
+              </div>
+              <div class="ip-panel">
+                <span class="ip-title">网卡 IP</span>
+                <div v-if="localIPs.length > 0" class="ip-list">
+                  <span v-for="ip in localIPs" :key="ip" class="ip-chip" :title="ip">{{ ip }}</span>
+                </div>
+                <span v-else class="ip-empty">{{ localIPLabel }}</span>
+              </div>
             </div>
-          </div>
 
-          <nav class="nav">
-            <template v-for="group in navGroups" :key="group.title">
-              <div class="nav-section">{{ group.title }}</div>
-              <button
-                v-for="item in group.items"
-                :key="item.key"
-                class="nav-item"
-                :class="{ active: activePage === item.key, disabled: item.disabled }"
-                type="button"
-                @click="selectPage(item)"
-              >
-                <NIcon :component="item.icon" />
-                <span>{{ item.label }}</span>
-              </button>
-            </template>
-          </nav>
+            <nav class="nav">
+              <template v-for="group in navGroups" :key="group.title">
+                <div class="nav-section">{{ group.title }}</div>
+                <button
+                  v-for="item in group.items"
+                  :key="item.key"
+                  class="nav-item"
+                  :class="{ active: activePage === item.key, disabled: item.disabled }"
+                  type="button"
+                  @click="selectPage(item)"
+                >
+                  <NIcon :component="item.icon" />
+                  <span>{{ item.label }}</span>
+                </button>
+              </template>
+            </nav>
 
-          <div class="nav-status">
-            <div class="status-pill" :class="{ stopped: !server.status.running }">
-              <span class="blink" />
-              <span>{{ server.status.running ? '服务运行中' : '服务已停止' }}</span>
+            <div class="nav-status">
+              <div class="ip-panel">
+                <span class="ip-title">网卡 IP</span>
+                <div v-if="localIPs.length > 0" class="ip-list">
+                  <span v-for="ip in localIPs" :key="ip" class="ip-chip" :title="ip">{{ ip }}</span>
+                </div>
+                <span v-else class="ip-empty">{{ localIPLabel }}</span>
+              </div>
+              <div class="status-pill" :class="{ stopped: !server.status.running }">
+                <span class="blink" />
+                <span>{{ server.status.running ? '服务运行中' : '服务已停止' }}</span>
+              </div>
             </div>
-          </div>
-        </aside>
+          </aside>
 
-        <main class="main">
-          <header class="topbar">
-            <span class="topbar-title">{{ activeLabel }}</span>
-            <span v-if="activePage === 'dashboard'" class="chip listen-chip" :class="{ running: server.status.running }">
-              {{ dashboardListenState }}
-            </span>
-            <span class="chip">{{ socksChip }}</span>
-            <span class="chip">{{ httpChip }}</span>
-            <div class="topbar-right">
-              <button class="icon-btn" type="button" :title="currentTheme === 'dark' ? '切换到白天模式' : '切换到黑暗模式'" @click="toggleTheme">
-                <NIcon :component="currentTheme === 'dark' ? Sun : Moon" />
-              </button>
-              <button
-                class="btn"
-                :class="server.status.running ? 'btn-stop' : 'btn-start'"
-                type="button"
-                :disabled="server.loading || serverActionLocked"
-                @click="toggleServer"
-              >
-                <NIcon :component="server.status.running ? Square : Power" />
-                <span>{{ server.status.running ? '停止服务' : '启动服务' }}</span>
-              </button>
+          <main class="main">
+            <header class="topbar">
+              <span class="topbar-title">{{ activeLabel }}</span>
+              <span v-if="activePage === 'dashboard'" class="chip listen-chip" :class="{ running: server.status.running }">
+                {{ dashboardListenState }}
+              </span>
+              <span class="chip">{{ socksChip }}</span>
+              <span class="chip">{{ httpChip }}</span>
+              <div class="topbar-right">
+                <button class="icon-btn" type="button" :title="currentTheme === 'dark' ? '切换到浅色' : '切换到深色'" @click="toggleTheme">
+                  <NIcon :component="currentTheme === 'dark' ? Sun : Moon" />
+                </button>
+                <button
+                  class="btn"
+                  :class="server.status.running ? 'btn-stop' : 'btn-start'"
+                  type="button"
+                  :disabled="server.loading || serverActionLocked"
+                  @click="toggleServer"
+                >
+                  <NIcon :component="server.status.running ? Square : Power" />
+                  <span>{{ server.status.running ? '停止服务' : '启动服务' }}</span>
+                </button>
+              </div>
+            </header>
+
+            <div class="content">
+              <Dashboard v-if="activePage === 'dashboard'" />
+              <ActiveConnectionsPage v-else-if="activePage === 'connections'" />
+              <LogsPage v-else-if="activePage === 'logs'" />
+              <StatsPage v-else-if="activePage === 'stats'" />
+              <AuthPage v-else-if="activePage === 'auth'" />
+              <ConfigPage v-else />
             </div>
-          </header>
-
-          <div class="content">
-            <Dashboard v-if="activePage === 'dashboard'" />
-            <ActiveConnectionsPage v-else-if="activePage === 'connections'" />
-            <LogsPage v-else-if="activePage === 'logs'" />
-            <ConfigPage v-else />
-          </div>
-        </main>
-      </div>
+          </main>
+        </div>
+      </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
 </template>

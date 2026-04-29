@@ -1,5 +1,52 @@
 export namespace config {
 	
+	export class AuthUser {
+	    username: string;
+	    password: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthUser(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.username = source["username"];
+	        this.password = source["password"];
+	    }
+	}
+	export class AuthConfig {
+	    enabled: boolean;
+	    users: AuthUser[];
+	
+	    static createFrom(source: any = {}) {
+	        return new AuthConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.users = this.convertValues(source["users"], AuthUser);
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class UIConfig {
 	    theme: string;
 	    language: string;
@@ -104,6 +151,7 @@ export namespace config {
 	}
 	export class Config {
 	    server: ServerConfig;
+	    auth: AuthConfig;
 	    relay: RelayConfig;
 	    log: LogConfig;
 	    ui: UIConfig;
@@ -115,6 +163,7 @@ export namespace config {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.server = this.convertValues(source["server"], ServerConfig);
+	        this.auth = this.convertValues(source["auth"], AuthConfig);
 	        this.relay = this.convertValues(source["relay"], RelayConfig);
 	        this.log = this.convertValues(source["log"], LogConfig);
 	        this.ui = this.convertValues(source["ui"], UIConfig);
@@ -163,6 +212,33 @@ export namespace logger {
 	        this.level = source["level"];
 	        this.message = source["message"];
 	        this.source = source["source"];
+	    }
+	}
+
+}
+
+export namespace platform {
+	
+	export class TrayState {
+	    enabled: boolean;
+	    visible: boolean;
+	    platform: string;
+	    supportsMenu: boolean;
+	    nativeStarted: boolean;
+	    hideDescription: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TrayState(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.visible = source["visible"];
+	        this.platform = source["platform"];
+	        this.supportsMenu = source["supportsMenu"];
+	        this.nativeStarted = source["nativeStarted"];
+	        this.hideDescription = source["hideDescription"];
 	    }
 	}
 
@@ -226,6 +302,9 @@ export namespace stats {
 	    totalConns: number;
 	    uploadBytes: number;
 	    downloadBytes: number;
+	    uploadRate: number;
+	    downloadRate: number;
+	    authFailures: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Stats(source);
@@ -237,6 +316,9 @@ export namespace stats {
 	        this.totalConns = source["totalConns"];
 	        this.uploadBytes = source["uploadBytes"];
 	        this.downloadBytes = source["downloadBytes"];
+	        this.uploadRate = source["uploadRate"];
+	        this.downloadRate = source["downloadRate"];
+	        this.authFailures = source["authFailures"];
 	    }
 	}
 
