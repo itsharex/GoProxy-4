@@ -24,6 +24,7 @@ func main() {
 		Height:           720,
 		MinWidth:         900,
 		MinHeight:        600,
+		MaxWidth:         1080,
 		BackgroundColour: options.NewRGBA(245, 247, 250, 255),
 		AssetServer: &assetserver.Options{
 			Assets: assets,

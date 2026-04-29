@@ -92,6 +92,10 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
+
+	// 禁用最大化按钮, 但允许自由调整窗口高度
+	go platform.DisableMaximizeButton("ProxyServer")
+
 	if a.tray != nil {
 		a.tray.Startup(ctx)
 		a.tray.StartNative(trayIcon, platform.TrayActions{

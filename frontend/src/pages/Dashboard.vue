@@ -278,7 +278,7 @@ onUnmounted(() => {
       {{ server.error }}
     </NAlert>
     <NAlert v-if="!server.status.running" type="warning" class="page-alert">
-      代理服务未启动，Proxifier 连接 127.0.0.1:8080 会被系统拒绝。请点击右上角“启动服务”后再测试。
+      代理服务未启动，请点击右上角“启动服务”后再测试。
     </NAlert>
 
     <NSpin :show="server.loading">
