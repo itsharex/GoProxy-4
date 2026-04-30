@@ -2,7 +2,11 @@
 
 package platform
 
-import "github.com/getlantern/systray"
+import (
+	"runtime"
+
+	"github.com/getlantern/systray"
+)
 
 type nativeTrayMenu struct {
 	status *systray.MenuItem
@@ -16,44 +20,49 @@ type nativeTrayMenu struct {
 }
 
 func (t *TrayManager) startNativeTray(icon []byte) {
-	go systray.Run(func() {
-		systray.SetIcon(icon)
-		systray.SetTitle("ProxyServer")
-		systray.SetTooltip("ProxyServer")
-		systray.SetOnDblClick(func() {
-			t.mu.Lock()
-			action := t.actions.ShowWindow
-			t.mu.Unlock()
-			if action != nil {
-				action()
+	go func() {
+		runtime.LockOSThread()
+		defer runtime.UnlockOSThread()
+
+		systray.Run(func() {
+			systray.SetIcon(icon)
+			systray.SetTitle("ProxyServer")
+			systray.SetTooltip("ProxyServer")
+			systray.SetOnDblClick(func() {
+				t.mu.Lock()
+				action := t.actions.ShowWindow
+				t.mu.Unlock()
+				if action != nil {
+					action()
+				}
+			})
+
+			menu := nativeTrayMenu{
+				status: systray.AddMenuItem("服务状态：未运行", "当前代理服务状态"),
+				ips:    systray.AddMenuItem("网卡 IP：未检测到", "当前本机网卡 IP"),
+				socks:  systray.AddMenuItem("SOCKS5：-", "SOCKS5 监听地址"),
+				http:   systray.AddMenuItem("HTTPS：-", "HTTP CONNECT 监听地址"),
 			}
+			menu.status.Disable()
+			menu.ips.Disable()
+			menu.socks.Disable()
+			menu.http.Disable()
+			systray.AddSeparator()
+			menu.show = systray.AddMenuItem("显示窗口", "显示 ProxyServer 主窗口")
+			menu.start = systray.AddMenuItem("启动服务", "启动代理服务")
+			menu.stop = systray.AddMenuItem("停止服务", "停止代理服务")
+			menu.quit = systray.AddMenuItem("退出", "退出 ProxyServer")
+
+			t.setNativeMenu(menu)
+			t.updateNativeTray()
+
+			go t.watchNativeMenu(menu)
+		}, func() {
+			t.mu.Lock()
+			t.nativeStarted = false
+			t.mu.Unlock()
 		})
-
-		menu := nativeTrayMenu{
-			status: systray.AddMenuItem("服务状态：未运行", "当前代理服务状态"),
-			ips:    systray.AddMenuItem("网卡 IP：未检测到", "当前本机网卡 IP"),
-			socks:  systray.AddMenuItem("SOCKS5：-", "SOCKS5 监听地址"),
-			http:   systray.AddMenuItem("HTTPS：-", "HTTP CONNECT 监听地址"),
-		}
-		menu.status.Disable()
-		menu.ips.Disable()
-		menu.socks.Disable()
-		menu.http.Disable()
-		systray.AddSeparator()
-		menu.show = systray.AddMenuItem("显示窗口", "显示 ProxyServer 主窗口")
-		menu.start = systray.AddMenuItem("启动服务", "启动代理服务")
-		menu.stop = systray.AddMenuItem("停止服务", "停止代理服务")
-		menu.quit = systray.AddMenuItem("退出", "退出 ProxyServer")
-
-		t.setNativeMenu(menu)
-		t.updateNativeTray()
-
-		go t.watchNativeMenu(menu)
-	}, func() {
-		t.mu.Lock()
-		t.nativeStarted = false
-		t.mu.Unlock()
-	})
+	}()
 }
 
 func (t *TrayManager) watchNativeMenu(menu nativeTrayMenu) {

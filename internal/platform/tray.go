@@ -114,6 +114,7 @@ func (t *TrayManager) ShowWindow() {
 	t.visible = true
 	t.mu.Unlock()
 	if ctx != nil {
+		t.window.Unminimise(ctx)
 		t.window.Show(ctx)
 	}
 }
@@ -205,6 +206,7 @@ func (t *TrayManager) runTrayAction(action func() error) {
 
 type windowOps interface {
 	Show(context.Context)
+	Unminimise(context.Context)
 	Hide(context.Context)
 	Quit(context.Context)
 }
@@ -213,6 +215,10 @@ type wailsWindowOps struct{}
 
 func (wailsWindowOps) Show(ctx context.Context) {
 	wailsruntime.WindowShow(ctx)
+}
+
+func (wailsWindowOps) Unminimise(ctx context.Context) {
+	wailsruntime.WindowUnminimise(ctx)
 }
 
 func (wailsWindowOps) Hide(ctx context.Context) {
