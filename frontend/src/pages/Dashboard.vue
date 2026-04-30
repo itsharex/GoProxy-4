@@ -1,34 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue'
+import * as echarts from 'echarts/core'
+import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
+import { LineChart } from 'echarts/charts'
+import { CanvasRenderer } from 'echarts/renderers'
+import type { EChartsCoreOption, EChartsType } from 'echarts/core'
 import { NAlert, NSpin } from 'naive-ui'
 import { useConfigStore } from '../stores/config'
 import { useLogStore } from '../stores/logs'
 import { useServerStore } from '../stores/server'
 import type { LogEntry } from '../types'
 
+echarts.use([GridComponent, LegendComponent, TooltipComponent, LineChart, CanvasRenderer])
+
 const server = useServerStore()
 const config = useConfigStore()
 const logs = useLogStore()
 
-const samples = ref<Array<{ up: number; down: number }>>(Array.from({ length: 60 }, () => ({ up: 0, down: 0 })))
 const lastBytes = ref({ up: 0, down: 0 })
 const lastClientBytes = ref(new Map<string, { uploadBytes: number; downloadBytes: number }>())
 const clientRates = ref(new Map<string, { uploadRate: number; downloadRate: number }>())
 const chartTime = ref('--')
+const chartEl = ref<HTMLDivElement | null>(null)
 const logLevel = ref<'ALL' | LogEntry['level']>('ALL')
-const hoverIndex = ref<number | null>(null)
 let timer: number | undefined
-
-const chartWidth = 760
-const chartHeight = 220
-const chartBounds = {
-  left: 58,
-  top: 18,
-  right: 18,
-  bottom: 32
-}
-const chartPlotWidth = chartWidth - chartBounds.left - chartBounds.right
-const chartPlotHeight = chartHeight - chartBounds.top - chartBounds.bottom
+let chart: EChartsType | null = null
 
 const logTabs: Array<{ label: string; value: 'ALL' | LogEntry['level'] }> = [
   { label: '全部', value: 'ALL' },
@@ -39,53 +35,9 @@ const logTabs: Array<{ label: string; value: 'ALL' | LogEntry['level'] }> = [
 ]
 
 const maxConnections = computed(() => config.draft?.relay.maxConnections ?? 1000)
-const uploadRate = computed(() => samples.value.at(-1)?.up ?? 0)
-const downloadRate = computed(() => samples.value.at(-1)?.down ?? 0)
+const uploadRate = computed(() => server.stats.uploadRate)
+const downloadRate = computed(() => server.stats.downloadRate)
 const totalTraffic = computed(() => server.stats.uploadBytes + server.stats.downloadBytes)
-const chartMax = computed(() => Math.max(1, ...samples.value.flatMap((point) => [point.up, point.down])))
-const chartPointsUp = computed(() => buildChartPoints(samples.value.map((point) => point.up)))
-const chartPointsDown = computed(() => buildChartPoints(samples.value.map((point) => point.down)))
-const chartPathUp = computed(() => buildSmoothPath(chartPointsUp.value))
-const chartPathDown = computed(() => buildSmoothPath(chartPointsDown.value))
-const chartYTicks = computed(() => {
-  return Array.from({ length: 5 }, (_, index) => {
-    const ratio = index / 4
-    const value = chartMax.value * (1 - ratio)
-    return {
-      y: chartBounds.top + ratio * chartPlotHeight,
-      label: formatAxisRate(value)
-    }
-  })
-})
-const chartXTicks = computed(() => {
-  const ticks = [
-    { index: 0, label: '-59s' },
-    { index: 15, label: '-45s' },
-    { index: 30, label: '-30s' },
-    { index: 45, label: '-15s' },
-    { index: 59, label: 'now' }
-  ]
-  return ticks.map((tick) => ({
-    x: chartBounds.left + (tick.index / 59) * chartPlotWidth,
-    label: tick.label
-  }))
-})
-const hoverSample = computed(() => {
-  if (hoverIndex.value === null) return null
-  const sample = samples.value[hoverIndex.value]
-  const point = chartPointsUp.value[hoverIndex.value]
-  if (!sample || !point) return null
-  const tooltipX = point.x > chartWidth - 180 ? point.x - 162 : point.x + 12
-  return {
-    x: point.x,
-    upY: point.y,
-    downY: chartPointsDown.value[hoverIndex.value]?.y ?? point.y,
-    tooltipX,
-    tooltipY: chartBounds.top + 8,
-    up: sample.up,
-    down: sample.down
-  }
-})
 const clientRows = computed(() => {
   const grouped = new Map<
     string,
@@ -145,10 +97,6 @@ function formatRate(value: number): string {
   return `${formatBytes(value)}/s`
 }
 
-function formatAxisRate(value: number): string {
-  return formatRate(value).replace(' ', '')
-}
-
 function connectionTraffic(upload: number, download: number): string {
   return `${formatBytes(upload)} ↑ ${formatBytes(download)} ↓`
 }
@@ -179,59 +127,77 @@ function levelClass(level: LogEntry['level']) {
   return level.toLowerCase()
 }
 
-function buildChartPoints(values: number[]): Array<{ x: number; y: number; value: number }> {
-  const max = chartMax.value
-  return values.map((value, index) => {
-    const x = chartBounds.left + (index / Math.max(values.length - 1, 1)) * chartPlotWidth
-    const y = chartBounds.top + chartPlotHeight - (value / max) * chartPlotHeight
-    return { x, y, value }
-  })
-}
-
-function buildSmoothPath(points: Array<{ x: number; y: number }>): string {
-  if (points.length === 0) return ''
-  if (points.length === 1) return `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`
-
-  let path = `M ${points[0].x.toFixed(1)} ${points[0].y.toFixed(1)}`
-  for (let index = 1; index < points.length; index += 1) {
-    const prev = points[index - 1]
-    const curr = points[index]
-    const midX = (prev.x + curr.x) / 2
-    path += ` C ${midX.toFixed(1)} ${prev.y.toFixed(1)}, ${midX.toFixed(1)} ${curr.y.toFixed(1)}, ${curr.x.toFixed(1)} ${curr.y.toFixed(1)}`
+function renderChart() {
+  if (!chartEl.value) return
+  chart ??= echarts.init(chartEl.value)
+  const option: EChartsCoreOption = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      formatter(params: unknown) {
+        const items = Array.isArray(params) ? params : [params]
+        return items
+          .map((item) => `${item.marker}${item.seriesName}: ${formatRate(Number(item.value))}`)
+          .join('<br/>')
+      }
+    },
+    legend: {
+      right: 10,
+      top: 4,
+      textStyle: { color: '#7d8590' }
+    },
+    grid: {
+      top: 42,
+      right: 20,
+      bottom: 26,
+      left: 54
+    },
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: server.trafficHistory.map((item) => item.time),
+      axisLabel: { color: '#7d8590', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#2a3340' } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: '#7d8590',
+        fontSize: 10,
+        formatter: (value: number) => formatBytes(value)
+      },
+      splitLine: { lineStyle: { color: 'rgba(125,133,144,0.18)' } }
+    },
+    series: [
+      {
+        name: '上传',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: server.trafficHistory.map((item) => item.uploadRate),
+        lineStyle: { color: '#3b82f6', width: 2 }
+      },
+      {
+        name: '下载',
+        type: 'line',
+        smooth: true,
+        showSymbol: false,
+        data: server.trafficHistory.map((item) => item.downloadRate),
+        lineStyle: { color: '#f59e0b', width: 2 }
+      }
+    ]
   }
-  return path
+  chart?.setOption(option)
 }
 
-function onChartMouseMove(event: MouseEvent) {
-  const svg = event.currentTarget as SVGSVGElement
-  const rect = svg.getBoundingClientRect()
-  const x = ((event.clientX - rect.left) / rect.width) * chartWidth
-  const y = ((event.clientY - rect.top) / rect.height) * chartHeight
-
-  if (
-    x < chartBounds.left ||
-    x > chartWidth - chartBounds.right ||
-    y < chartBounds.top ||
-    y > chartHeight - chartBounds.bottom
-  ) {
-    hoverIndex.value = null
-    return
-  }
-
-  const ratio = (x - chartBounds.left) / chartPlotWidth
-  hoverIndex.value = Math.max(0, Math.min(samples.value.length - 1, Math.round(ratio * (samples.value.length - 1))))
-}
-
-function onChartMouseLeave() {
-  hoverIndex.value = null
+function resizeChart() {
+  chart?.resize()
 }
 
 async function tick() {
   await server.refresh()
-  const up = Math.max(0, server.stats.uploadBytes - lastBytes.value.up)
-  const down = Math.max(0, server.stats.downloadBytes - lastBytes.value.down)
   lastBytes.value = { up: server.stats.uploadBytes, down: server.stats.downloadBytes }
-  samples.value = [...samples.value.slice(1), { up, down }]
   updateClientRates()
   chartTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
 }
@@ -258,13 +224,23 @@ function updateClientRates() {
   lastClientBytes.value = totals
 }
 
+watch(() => server.trafficHistory, () => nextTick(renderChart), { deep: true })
+
 onMounted(async () => {
   await Promise.all([server.refresh(), logs.load()])
   lastBytes.value = { up: server.stats.uploadBytes, down: server.stats.downloadBytes }
   updateClientRates()
+  renderChart()
+  window.addEventListener('resize', resizeChart)
   timer = window.setInterval(() => {
     void tick()
   }, 1000)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', resizeChart)
+  chart?.dispose()
+  chart = null
 })
 
 onUnmounted(() => {
@@ -310,84 +286,9 @@ onUnmounted(() => {
           <section class="panel">
             <div class="panel-head">
               <h3>实时流量速率</h3>
-              <span class="tag ml">{{ chartTime }}</span>
+              <span class="tag ml">ECHARTS · {{ chartTime }}</span>
             </div>
-            <div class="chart-wrap">
-              <div class="chart-legend">
-                <span><i class="legend-dot up" />上传</span>
-                <span><i class="legend-dot down" />下载</span>
-              </div>
-              <svg
-                class="traffic-chart"
-                :viewBox="`0 0 ${chartWidth} ${chartHeight}`"
-                preserveAspectRatio="none"
-                @mousemove="onChartMouseMove"
-                @mouseleave="onChartMouseLeave"
-              >
-                <line
-                  v-for="tick in chartYTicks"
-                  :key="tick.y"
-                  :x1="chartBounds.left"
-                  :y1="tick.y"
-                  :x2="chartWidth - chartBounds.right"
-                  :y2="tick.y"
-                  class="chart-grid"
-                />
-                <line
-                  :x1="chartBounds.left"
-                  :y1="chartBounds.top"
-                  :x2="chartBounds.left"
-                  :y2="chartHeight - chartBounds.bottom"
-                  class="chart-axis"
-                />
-                <line
-                  :x1="chartBounds.left"
-                  :y1="chartHeight - chartBounds.bottom"
-                  :x2="chartWidth - chartBounds.right"
-                  :y2="chartHeight - chartBounds.bottom"
-                  class="chart-axis"
-                />
-                <text
-                  v-for="tick in chartYTicks"
-                  :key="tick.label"
-                  :x="chartBounds.left - 8"
-                  :y="tick.y + 4"
-                  text-anchor="end"
-                  class="chart-tick-label"
-                >
-                  {{ tick.label }}
-                </text>
-                <text
-                  v-for="tick in chartXTicks"
-                  :key="tick.label"
-                  :x="tick.x"
-                  :y="chartHeight - 10"
-                  text-anchor="middle"
-                  class="chart-tick-label"
-                >
-                  {{ tick.label }}
-                </text>
-                <path :d="chartPathUp" class="chart-line chart-up" />
-                <path :d="chartPathDown" class="chart-line chart-down" />
-                <g v-if="hoverSample">
-                  <line
-                    :x1="hoverSample.x"
-                    :y1="chartBounds.top"
-                    :x2="hoverSample.x"
-                    :y2="chartHeight - chartBounds.bottom"
-                    class="chart-hover-line"
-                  />
-                  <circle :cx="hoverSample.x" :cy="hoverSample.upY" r="4" class="chart-point up" />
-                  <circle :cx="hoverSample.x" :cy="hoverSample.downY" r="4" class="chart-point down" />
-                  <g :transform="`translate(${hoverSample.tooltipX}, ${hoverSample.tooltipY})`">
-                    <rect width="150" height="58" rx="6" class="chart-tooltip-bg" />
-                    <text x="10" y="20" class="chart-tooltip-title">当前采样</text>
-                    <text x="10" y="38" class="chart-tooltip-up">上传 {{ formatRate(hoverSample.up) }}</text>
-                    <text x="10" y="52" class="chart-tooltip-down">下载 {{ formatRate(hoverSample.down) }}</text>
-                  </g>
-                </g>
-              </svg>
-            </div>
+            <div ref="chartEl" class="echarts-panel" />
           </section>
         </div>
 

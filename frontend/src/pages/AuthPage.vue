@@ -1,6 +1,18 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { Clipboard, KeyRound, Plus, RefreshCw, ShieldCheck, Trash2 } from 'lucide-vue-next'
+import {
+  Clipboard,
+  KeyRound,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Server,
+  Shield,
+  ShieldCheck,
+  Trash2,
+  UserRound
+} from 'lucide-vue-next'
 import {
   NAlert,
   NButton,
@@ -9,6 +21,7 @@ import {
   NIcon,
   NInput,
   NModal,
+  NSpin,
   NSwitch,
   NTable,
   useDialog,
@@ -69,9 +82,9 @@ function maskedProxyAuthorization(name: string) {
 async function localIPText() {
   try {
     const ips = await getLocalIPAddresses()
-    if (ips.length > 0) return ips.join('、')
+    if (ips.length > 0) return ips.join(' / ')
   } catch {
-    // Keep the dialog usable even if adapter enumeration fails.
+    // Ignore adapter enumeration failures here.
   }
   return '未检测到网卡 IP'
 }
@@ -82,24 +95,18 @@ function credentialPayload(name: string, plainPassword: string, localIPs: string
   const proxyAuth = `Basic ${basicToken(name, plainPassword)}`
   return [
     '===============',
-    'GoProxy连接信息',
+    'GoProxy 连接信息',
     '===============',
-    `当前IP：${localIPs}`,
+    `当前 IP：${localIPs}`,
     '端口：',
-    `Socks5：${socksPort}`,
+    `SOCKS5：${socksPort}`,
     `HTTPS：${httpPort}`,
-    'Socks5连接校验信息：',
+    'SOCKS5 连接校验信息：',
     `用户名：${name}`,
-    `密    码：${plainPassword}`,
-    'HTTPS连接校验信息：',
+    `密码：${plainPassword}`,
+    'HTTPS 连接校验信息：',
     `Proxy-Authorization：${proxyAuth}`
   ].join('\n')
-}
-
-function copyPayload(name: string) {
-  const plainPassword = sessionPasswords[name]
-  if (!plainPassword) return ''
-  return credentialPayload(name, plainPassword, '请以新增或重置弹窗中的网卡 IP 为准')
 }
 
 function resetForm() {
@@ -233,93 +240,139 @@ async function submitReset() {
 </script>
 
 <template>
-  <section class="auth-page">
-    <div class="section-actions">
-      <div>
-        <span class="section-kicker">AUTH</span>
-        <h2>认证管理</h2>
+  <section class="auth-unified-page">
+    <div class="page-shell">
+      <div class="page-header">
+        <div class="page-header-main">
+          <div class="page-header-icon">
+            <NIcon :component="Shield" />
+          </div>
+          <div>
+            <h2 class="page-title">认证管理</h2>
+            <p class="page-subtitle">管理代理访问控制、用户凭据和认证状态</p>
+          </div>
+        </div>
+        <div class="page-header-actions">
+          <NButton secondary :loading="config.loading" @click="reloadConfig">
+            <template #icon>
+              <NIcon :component="RefreshCw" />
+            </template>
+            刷新
+          </NButton>
+          <NButton type="primary" @click="showAdd = true">
+            <template #icon>
+              <NIcon :component="Plus" />
+            </template>
+            新增用户
+          </NButton>
+        </div>
       </div>
-      <div class="header-actions">
-        <NButton secondary :loading="config.loading" @click="reloadConfig">
-          <template #icon>
-            <NIcon :component="RefreshCw" />
-          </template>
-          刷新
-        </NButton>
-        <NButton type="primary" @click="showAdd = true">
-          <template #icon>
-            <NIcon :component="Plus" />
-          </template>
-          新增用户
-        </NButton>
-      </div>
+
+      <NAlert v-if="authEnabled && users.length === 0" type="warning" class="page-alert">
+        开启认证前至少需要一个用户。
+      </NAlert>
+      <NAlert v-if="!authEnabled" type="warning" class="page-alert">
+        当前未开启认证，请确认监听地址不会暴露到不可信网络。
+      </NAlert>
+
+      <NSpin :show="config.loading">
+        <template v-if="config.draft">
+          <div>
+            <section class="config-card">
+              <div class="card-head">
+                <div class="card-title-wrap">
+                  <div class="card-icon access">
+                    <NIcon :component="ShieldCheck" />
+                  </div>
+                  <div>
+                    <div class="card-title">访问控制</div>
+                    <div class="card-subtitle">BASIC / RFC1929</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card-content">
+                <div class="surface-block">
+                  <div class="field-row field-row-switch">
+                    <div class="field-label-group">
+                      <div class="field-title">代理认证</div>
+                      <div class="field-desc">SOCKS5 使用用户名和密码，HTTP CONNECT 使用 Proxy-Authorization Basic</div>
+                    </div>
+                    <NSwitch v-model:value="authEnabled" :loading="busy" />
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="config-card config-card-spaced">
+              <div class="card-head">
+                <div class="card-title-wrap">
+                  <div class="card-icon users">
+                    <NIcon :component="UserRound" />
+                  </div>
+                  <div>
+                    <div class="card-title">用户列表</div>
+                    <div class="card-subtitle">{{ users.length }} USERS</div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="card-content">
+                <div class="table-shell">
+                  <NTable :bordered="false" :single-line="false" class="auth-table">
+                    <thead>
+                      <tr>
+                        <th>用户名</th>
+                        <th>密码 Hash</th>
+                        <th>Proxy-Authorization</th>
+                        <th>操作</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr v-if="users.length === 0">
+                        <td colspan="4" class="table-empty">暂无认证用户</td>
+                      </tr>
+                      <tr v-for="user in users" :key="user.username">
+                        <td class="mono-cell">{{ user.username }}</td>
+                        <td class="mono-cell">{{ maskHash(user.password) }}</td>
+                        <td class="mono-cell">{{ maskedProxyAuthorization(user.username) }}</td>
+                        <td>
+                          <div class="row-actions">
+                            <NButton size="small" secondary @click="openReset(user.username)">
+                              <template #icon>
+                                <NIcon :component="KeyRound" />
+                              </template>
+                              重置密码
+                            </NButton>
+                            <NButton size="small" type="error" secondary @click="confirmRemove(user.username)">
+                              <template #icon>
+                                <NIcon :component="Trash2" />
+                              </template>
+                              删除
+                            </NButton>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </NTable>
+                </div>
+              </div>
+            </section>
+          </div>
+        </template>
+      </NSpin>
     </div>
 
-    <NAlert v-if="authEnabled && users.length === 0" type="warning" class="page-alert">
-      开启认证前至少需要一个用户。
-    </NAlert>
-    <NAlert v-if="!authEnabled" type="warning" class="page-alert">
-      当前未开启认证，请确认监听地址不会暴露到不可信网络。
-    </NAlert>
-
-    <section class="panel form-panel">
-      <div class="panel-head">
-        <h3>访问控制</h3>
-        <span class="tag">BASIC / RFC1929</span>
-      </div>
-      <div class="auth-toggle-row">
-        <div>
-          <strong>代理认证</strong>
-          <span>SOCKS5 使用用户名和密码；HTTP CONNECT 使用 Proxy-Authorization Basic。</span>
-        </div>
-        <NSwitch v-model:value="authEnabled" :loading="busy" />
-      </div>
-    </section>
-
-    <section class="panel">
-      <div class="panel-head">
-        <h3>用户列表</h3>
-        <span class="tag">{{ users.length }} USERS</span>
-      </div>
-      <NTable :bordered="false" :single-line="false" class="auth-table">
-        <thead>
-          <tr>
-            <th>用户名</th>
-            <th>密码 Hash</th>
-            <th>Proxy-Authorization</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="users.length === 0">
-            <td colspan="4" class="table-empty">暂无认证用户</td>
-          </tr>
-          <tr v-for="user in users" :key="user.username">
-            <td class="mono-cell">{{ user.username }}</td>
-            <td class="mono-cell">{{ maskHash(user.password) }}</td>
-            <td class="mono-cell">{{ maskedProxyAuthorization(user.username) }}</td>
-            <td>
-              <div class="row-actions">
-                <NButton size="small" secondary @click="openReset(user.username)">
-                  <template #icon>
-                    <NIcon :component="KeyRound" />
-                  </template>
-                  重置密码
-                </NButton>
-                <NButton size="small" type="error" secondary @click="confirmRemove(user.username)">
-                  <template #icon>
-                    <NIcon :component="Trash2" />
-                  </template>
-                  删除
-                </NButton>
-              </div>
-            </td>
-          </tr>
-        </tbody>
-      </NTable>
-    </section>
-
-    <NModal v-model:show="showAdd" preset="dialog" title="新增用户" positive-text="保存" negative-text="取消" :loading="busy" @positive-click="createUser" @after-leave="resetForm">
+    <NModal
+      v-model:show="showAdd"
+      preset="dialog"
+      title="新增用户"
+      positive-text="保存"
+      negative-text="取消"
+      :loading="busy"
+      @positive-click="createUser"
+      @after-leave="resetForm"
+    >
       <NForm label-placement="top">
         <NFormItem label="用户名">
           <NInput v-model:value="username" placeholder="admin" />
@@ -345,7 +398,7 @@ async function submitReset() {
       </NAlert>
       <pre class="credential-box">{{ credentialInfo }}</pre>
       <template #action>
-        <div class="header-actions">
+        <div class="page-header-actions">
           <NButton secondary @click="copyValue(credentialInfo, '连接信息已复制')">
             <template #icon>
               <NIcon :component="Clipboard" />
@@ -359,7 +412,16 @@ async function submitReset() {
       </template>
     </NModal>
 
-    <NModal v-model:show="showReset" preset="dialog" title="重置密码" positive-text="保存" negative-text="取消" :loading="busy" @positive-click="submitReset" @after-leave="resetForm">
+    <NModal
+      v-model:show="showReset"
+      preset="dialog"
+      title="重置密码"
+      positive-text="保存"
+      negative-text="取消"
+      :loading="busy"
+      @positive-click="submitReset"
+      @after-leave="resetForm"
+    >
       <NForm label-placement="top">
         <NFormItem label="用户">
           <NInput :value="targetUser" readonly>
@@ -375,3 +437,229 @@ async function submitReset() {
     </NModal>
   </section>
 </template>
+
+<style scoped>
+.auth-unified-page {
+  width: 100%;
+}
+
+.page-shell {
+  max-width: 920px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.page-header-main {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.page-header-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--panel) 86%, var(--fg-soft) 14%);
+  color: var(--fg);
+  font-size: 18px;
+  border: 1px solid var(--border);
+}
+
+.page-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.page-subtitle {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--fg-soft);
+}
+
+.page-alert {
+  margin: 0;
+}
+
+.config-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.04);
+  overflow: hidden;
+}
+
+.config-card-spaced {
+  margin-top: 24px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 24px 24px 0;
+}
+
+.card-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.card-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+}
+
+.card-icon.access {
+  color: #059669;
+  background: rgba(16, 185, 129, 0.12);
+}
+
+.card-icon.users {
+  color: #0284c7;
+  background: rgba(14, 165, 233, 0.12);
+}
+
+.card-title {
+  font-size: 16px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.card-subtitle {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--fg-soft);
+}
+
+.card-content {
+  padding: 24px;
+}
+
+.surface-block,
+.table-shell {
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 90%, var(--fg-soft) 10%);
+}
+
+.surface-block {
+  padding: 18px 16px;
+}
+
+.field-row-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.field-label-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.field-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.field-desc {
+  font-size: 13px;
+  color: var(--fg-soft);
+}
+
+.table-shell {
+  overflow: hidden;
+}
+
+.auth-table :deep(th) {
+  color: var(--fg-soft);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.auth-table :deep(td) {
+  color: var(--fg);
+}
+
+.mono-cell {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.table-empty {
+  text-align: center;
+  color: var(--fg-soft);
+  padding: 28px 16px !important;
+}
+
+.row-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.credential-box {
+  margin: 14px 0 0;
+  padding: 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--panel) 86%, var(--fg-soft) 14%);
+  border: 1px solid var(--border);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.auth-unified-page :deep(.n-input),
+.auth-unified-page :deep(.n-base-selection) {
+  --n-border-radius: 8px !important;
+}
+
+@media (max-width: 720px) {
+  .page-header,
+  .page-header-main,
+  .field-row-switch {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .page-header-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+</style>
