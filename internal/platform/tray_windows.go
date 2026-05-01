@@ -15,7 +15,7 @@ func supportsTrayMenu() bool {
 }
 
 func trayHideDescription() string {
-	return "Windows uses the notification area tray icon to keep the app running in the background."
+	return "Windows 使用通知区域托盘图标保持后台运行。"
 }
 
 func (t *TrayManager) setNativeMenu(menu nativeTrayMenu) {
@@ -42,9 +42,9 @@ func (t *TrayManager) updateNativeTray() {
 		if menu.status != nil {
 			menu.status.Show()
 			if running {
-				menu.status.SetTitle("服务状态: 运行中")
+				menu.status.SetTitle("服务状态：运行中")
 			} else {
-				menu.status.SetTitle("服务状态: 已停止")
+				menu.status.SetTitle("服务状态：已停止")
 			}
 		}
 		if menu.ips != nil {
@@ -53,15 +53,15 @@ func (t *TrayManager) updateNativeTray() {
 			if len(localIPs) > 0 {
 				text = strings.Join(localIPs, " / ")
 			}
-			menu.ips.SetTitle("本地IP: " + text)
+			menu.ips.SetTitle("网卡 IP：" + text)
 		}
 		if menu.socks != nil {
 			menu.socks.Show()
-			menu.socks.SetTitle("SOCKS5: " + emptyAsDash(socksAddr))
+			menu.socks.SetTitle("SOCKS5：" + emptyAsDash(socksAddr))
 		}
 		if menu.http != nil {
 			menu.http.Show()
-			menu.http.SetTitle("HTTP: " + emptyAsDash(httpAddr))
+			menu.http.SetTitle("HTTPS：" + emptyAsDash(httpAddr))
 		}
 	} else {
 		if menu.status != nil {
@@ -81,14 +81,11 @@ func (t *TrayManager) updateNativeTray() {
 	if running {
 		menu.start.Disable()
 		menu.stop.Enable()
-		systray.SetTitle("GoProxy 运行中")
 		systray.SetTooltip("GoProxy - 服务运行中")
 		return
 	}
-
 	menu.start.Enable()
 	menu.stop.Disable()
-	systray.SetTitle("GoProxy 已停止")
 	systray.SetTooltip("GoProxy - 服务已停止")
 }
 
