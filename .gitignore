@@ -21,3 +21,8 @@ pnpm-debug.log*
 config.yaml
 config.yaml.bak
 *.log
+.docs/
+.claude/
+.build/
+.codex/
+.opencode/

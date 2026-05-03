@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
-import { Copy, FilePlus2, Info, Network, Pencil, Plus, Route, Save, Trash2, Copy as CopyIcon } from 'lucide-vue-next'
+import { computed, h, onMounted, ref, type VNode } from 'vue'
+import { Copy, FilePlus2, Info, Network, Pencil, Plus, Route, Trash2, Copy as CopyIcon } from 'lucide-vue-next'
 import {
   NButton,
   NDrawer,
   NDrawerContent,
+  NDropdown,
   NIcon,
   NInput,
   NInputNumber,
@@ -14,7 +15,8 @@ import {
   NSwitch,
   NTooltip,
   useDialog,
-  useMessage
+  useMessage,
+  type SelectOption
 } from 'naive-ui'
 import {
   createRouteFile,
@@ -46,18 +48,21 @@ const error = ref('')
 const modalVisible = ref(false)
 const editingIndex = ref(-1)
 const draft = ref<RuleDraft>(emptyRule())
-const deleteTarget = ref('')
 
 const activeFile = computed(() => config.draft?.route.activeFile ?? 'default.rule')
-const fileOptions = computed(() => files.value.map((file) => ({ label: file.name, value: file.name })))
+const fileOptions = computed(() => [
+  { label: '＋ 新建规则', value: '__create__', type: 'info' },
+  ...files.value.map((file) => ({ 
+    label: file.name.replace(/\.rule$/, ''), 
+    value: file.name,
+    file: file
+  }))
+])
 const interfaceOptions = computed(() =>
   interfaces.value.map((item) => ({
     label: `${item.name}${item.addresses.length > 0 ? ` / ${item.addresses.join(', ')}` : ''}`,
     value: item.name
   }))
-)
-const deletableFileOptions = computed(() =>
-  files.value.filter((file) => file.name !== activeFile.value && file.name !== 'default.rule').map((file) => ({ label: file.name, value: file.name }))
 )
 const sortedRules = computed(() =>
   (ruleSet.value?.rules ?? [])
@@ -178,7 +183,6 @@ async function loadAll() {
   try {
     if (!config.draft) await config.load()
     files.value = await listRouteFiles()
-    deleteTarget.value = deletableFileOptions.value[0]?.value ?? ''
     ruleSet.value = await loadRouteFile(activeFile.value)
     interfaces.value = await getNetworkInterfaces()
   } catch (err) {
@@ -189,11 +193,74 @@ async function loadAll() {
 }
 
 async function switchFile(name: string) {
-  if (!name || name === activeFile.value) return
+  if (!name) return
+  if (name === '__create__') {
+    createFile()
+    return
+  }
+  if (name === activeFile.value) return
   await setActiveRouteFile(name)
   await config.load()
   await loadAll()
   message.success('规则文件已切换')
+}
+
+function renderFileOption({ node, option }: { node: VNode; option: SelectOption & { file?: RouteFileInfo } }) {
+  if (option.value === '__create__' || !option.file) {
+    return h('div', { style: 'color: #10b981; font-weight: 600; font-size: 13px;' }, [node])
+  }
+  const file = option.file
+  const canDelete = file.name !== 'default.rule' && file.name !== activeFile.value
+  return h(
+    'div',
+    { style: 'display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px;' },
+    [
+      h('div', { style: 'flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;' }, [node]),
+      h('div', { style: 'display: flex; align-items: center; gap: 2px; flex-shrink: 0;' }, [
+        h(
+          NTooltip,
+          { placement: 'right', trigger: 'hover' },
+          {
+            trigger: () =>
+              h(
+                'span',
+                {
+                  style: 'display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; cursor: pointer; border-radius: 4px;',
+                  onClick: (e: Event) => e.stopPropagation()
+                },
+                [h(NIcon, { component: Info, size: 12 })]
+              ),
+            default: () =>
+              h('div', { class: 'info-tooltip' }, [
+                h('div', { class: 'info-row' }, [
+                  h('span', { class: 'info-label' }, '名称'),
+                  h('span', { class: 'info-val' }, file.name.replace(/\.rule$/, ''))
+                ]),
+                file.updatedAt
+                  ? h('div', { class: 'info-row' }, [
+                      h('span', { class: 'info-label' }, '更新'),
+                      h('span', { class: 'info-val' }, new Date(file.updatedAt).toLocaleString())
+                    ])
+                  : null
+              ])
+          }
+        ),
+        canDelete
+          ? h(
+              'span',
+              {
+                style: 'display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; cursor: pointer; border-radius: 4px; color: var(--accent4);',
+                onClick: (e: Event) => {
+                  e.stopPropagation()
+                  handleDeleteSelect(file.name)
+                }
+              },
+              [h(NIcon, { component: Trash2, size: 12 })]
+            )
+          : null
+      ])
+    ]
+  )
 }
 
 async function saveRules() {
@@ -218,40 +285,80 @@ async function saveRouteSwitch() {
 }
 
 async function createFile() {
-  const name = window.prompt('新规则文件名，例如 office.rule')
-  if (!name) return
-  try {
-    await createRouteFile(name.trim())
-    files.value = await listRouteFiles()
-    message.success('规则文件已创建')
-  } catch (err) {
-    message.error(friendlyError(err))
-  }
+  const fileName = ref('')
+  dialog.create({
+    title: '新建规则',
+    content: () =>
+      h(NInput, {
+        value: fileName.value,
+        placeholder: '请输入规则名称，例如 office',
+        onUpdateValue: (val: string) => {
+          fileName.value = val
+        }
+      }),
+    positiveText: '创建',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      if (!fileName.value.trim()) {
+        message.error('请输入规则名称')
+        return
+      }
+      try {
+        const name = fileName.value.trim()
+        const finalName = name.endsWith('.rule') ? name : `${name}.rule`
+        await createRouteFile(finalName)
+        files.value = await listRouteFiles()
+        message.success('规则文件已创建')
+      } catch (err) {
+        message.error(friendlyError(err))
+      }
+    }
+  })
 }
 
 async function copyFile() {
   if (!ruleSet.value) return
-  const name = window.prompt('另存为文件名，例如 backup.rule')
-  if (!name) return
-  try {
-    await saveRouteFile(name.trim(), { ...ruleSet.value, name: name.trim().replace(/\.rule$/, '') })
-    files.value = await listRouteFiles()
-    message.success('规则文件已另存')
-  } catch (err) {
-    message.error(friendlyError(err))
-  }
+  const fileName = ref('')
+  dialog.create({
+    title: '另存为',
+    content: () =>
+      h(NInput, {
+        value: fileName.value,
+        placeholder: '请输入新规则名称，例如 backup',
+        onUpdateValue: (val: string) => {
+          fileName.value = val
+        }
+      }),
+    positiveText: '保存',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      if (!fileName.value.trim()) {
+        message.error('请输入规则名称')
+        return
+      }
+      try {
+        const name = fileName.value.trim()
+        const finalName = name.endsWith('.rule') ? name : `${name}.rule`
+        await saveRouteFile(finalName, { ...ruleSet.value!, name: name.replace(/\.rule$/, '') } as RouteRuleSet)
+        files.value = await listRouteFiles()
+        message.success('规则文件已另存')
+      } catch (err) {
+        message.error(friendlyError(err))
+      }
+    }
+  })
 }
 
-function confirmDeleteFile() {
-  if (!deleteTarget.value) return
+function handleDeleteSelect(key: string) {
+  if (!key) return
   dialog.warning({
     title: '删除规则文件',
-    content: deleteTarget.value,
+    content: `确定要删除规则文件 "${key.replace(/\.rule$/, '')}" 吗？此操作不可恢复。`,
     positiveText: '删除',
     negativeText: '取消',
     onPositiveClick: async () => {
       try {
-        await deleteRouteFile(deleteTarget.value)
+        await deleteRouteFile(key)
         await config.load()
         await loadAll()
         message.success('规则文件已删除')
@@ -275,16 +382,17 @@ function editRule(index: number) {
   modalVisible.value = true
 }
 
-function removeRule(index: number) {
+async function removeRule(index: number) {
 	if (!ruleSet.value) return
 	if (ruleSet.value.rules[index]?.id === 'default') {
 		message.warning('默认兜底规则不能删除')
 		return
 	}
 	ruleSet.value.rules.splice(index, 1)
+	await saveRules()
 }
 
-function saveDraft() {
+async function saveDraft() {
   if (!ruleSet.value) return
   const next = normalizeRule(draft.value)
   if (!next.id || !next.name || next.targets.length === 0) {
@@ -297,6 +405,7 @@ function saveDraft() {
     ruleSet.value.rules.push(next)
   }
   modalVisible.value = false
+  await saveRules()
 }
 
 onMounted(loadAll)
@@ -317,58 +426,18 @@ onMounted(loadAll)
             </div>
           </div>
           <div class="page-header-actions">
+            <NSelect :value="activeFile" :options="fileOptions" class="file-select" :render-option="renderFileOption" @update:value="switchFile" />
             <NSwitch v-if="config.draft" v-model:value="config.draft.route.enabled" @update:value="saveRouteSwitch">
               <template #checked>启用</template>
               <template #unchecked>停用</template>
             </NSwitch>
-            <NButton type="primary" :loading="saving" @click="saveRules">
-              <template #icon><NIcon :component="Save" /></template>
-              保存
-            </NButton>
+
           </div>
         </div>
 
         <div v-if="error" class="page-error">{{ error }}</div>
 
         <template v-if="ruleSet">
-          <section class="config-card">
-            <div class="file-toolbar">
-              <div class="file-toolbar-left">
-                <NSelect :value="activeFile" :options="fileOptions" class="file-select" @update:value="switchFile" />
-                <NTooltip placement="bottom">
-                  <template #trigger>
-                    <button class="info-btn" type="button">
-                      <NIcon :component="Info" />
-                    </button>
-                  </template>
-                  <div class="info-tooltip">
-                    <div v-if="ruleSet.name" class="info-row"><span class="info-label">名称</span><span class="info-val">{{ ruleSet.name }}</span></div>
-                    <div v-if="ruleSet.description" class="info-row"><span class="info-label">描述</span><span class="info-val">{{ ruleSet.description }}</span></div>
-                    <div class="info-row"><span class="info-label">版本</span><span class="info-val">v{{ ruleSet.version }}</span></div>
-                    <div v-if="ruleSet.updatedAt" class="info-row"><span class="info-label">更新</span><span class="info-val">{{ ruleSet.updatedAt }}</span></div>
-                  </div>
-                </NTooltip>
-              </div>
-              <div class="file-toolbar-right">
-                <NButton secondary size="small" @click="createFile">
-                  <template #icon><NIcon :component="FilePlus2" /></template>
-                  新建文件
-                </NButton>
-                <NButton secondary size="small" @click="copyFile">
-                  <template #icon><NIcon :component="Copy" /></template>
-                  另存为
-                </NButton>
-                <div class="delete-action">
-                  <NSelect v-model:value="deleteTarget" :options="deletableFileOptions" size="small" class="delete-select" placeholder="选择文件" />
-                  <NButton secondary size="small" type="error" :disabled="!deleteTarget" @click="confirmDeleteFile">
-                    <template #icon><NIcon :component="Trash2" /></template>
-                    删除
-                  </NButton>
-                </div>
-              </div>
-            </div>
-          </section>
-
           <section class="config-card config-card-spaced">
             <div class="card-head">
               <div class="card-title-wrap">
@@ -406,7 +475,7 @@ onMounted(loadAll)
                       <NSwitch
                         :value="rule.enabled"
                         size="small"
-                        @update:value="(val: boolean) => { if (ruleSet) ruleSet.rules[index].enabled = val }"
+                        @update:value="(val: boolean) => { if (ruleSet) { ruleSet.rules[index].enabled = val; saveRules() } }"
                       />
                     </td>
                     <td><span class="pri-badge">P{{ rule.priority }}</span></td>
@@ -683,52 +752,8 @@ onMounted(loadAll)
   color: var(--fg-soft);
 }
 
-/* ---- file toolbar ---- */
-
-.file-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 14px 20px;
-}
-
-.file-toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.file-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
 .file-select {
   width: 220px;
-}
-
-.info-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 28px;
-  height: 28px;
-  color: var(--muted);
-  cursor: pointer;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  font-size: 15px;
-  transition: all 0.15s;
-}
-
-.info-btn:hover {
-  color: var(--text);
-  background: var(--bg3);
-  border-color: var(--border);
 }
 
 .info-tooltip {
@@ -753,16 +778,6 @@ onMounted(loadAll)
   color: var(--text);
   font-family: var(--mono);
   font-size: 12px;
-}
-
-.delete-action {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.delete-select {
-  width: 140px;
 }
 
 /* ---- rule table ---- */
@@ -1185,15 +1200,6 @@ onMounted(loadAll)
   .page-header-actions {
     width: 100%;
     justify-content: flex-end;
-  }
-
-  .file-toolbar {
-    flex-direction: column;
-    align-items: flex-start;
-  }
-
-  .file-toolbar-right {
-    width: 100%;
   }
 
   .file-select {

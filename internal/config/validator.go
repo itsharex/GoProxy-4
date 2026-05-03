@@ -48,7 +48,7 @@ func Validate(cfg Config) error {
 		return err
 	}
 	if err := ValidateRouteFileName(cfg.Route.ActiveFile); err != nil {
-		return fmt.Errorf("route active file: %w", err)
+		return fmt.Errorf("当前规则文件无效: %w", err)
 	}
 
 	if cfg.Server.SOCKS5.Enabled && cfg.Server.HTTP.Enabled {
@@ -64,26 +64,26 @@ func Validate(cfg Config) error {
 func ValidateRouteFileName(name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return errors.New("route file name is required")
+		return errors.New("规则文件名称不能为空")
 	}
 	if !strings.HasSuffix(name, ".rule") {
-		return errors.New("route file name must end with .rule")
+		return errors.New("规则文件名称必须以 .rule 结尾")
 	}
 	if strings.Contains(name, "..") || strings.ContainsAny(name, `/\`) {
-		return errors.New("route file name must not contain path separators")
+		return errors.New("规则文件名称不能包含路径分隔符")
 	}
 	if strings.EqualFold(name, "config.yaml") {
-		return errors.New("route file name cannot be config.yaml")
+		return errors.New("规则文件名称不能为 config.yaml")
 	}
 	base := strings.TrimSuffix(name, ".rule")
 	if base == "" {
-		return errors.New("route file name is required")
+		return errors.New("规则文件名称不能为空")
 	}
 	for _, r := range base {
 		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_' {
 			continue
 		}
-		return errors.New("route file name may only contain letters, numbers, '-' and '_'")
+		return errors.New("规则文件名称只能包含字母、数字、'-' 和 '_'")
 	}
 	return nil
 }

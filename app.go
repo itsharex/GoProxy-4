@@ -64,35 +64,35 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 	cfg, err := manager.Load()
 	if err != nil {
 		if !errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("load config: %w", err)
+			return nil, fmt.Errorf("加载配置失败: %w", err)
 		}
 		cfg = config.Default()
 		if err := manager.Save(cfg); err != nil {
-			return nil, fmt.Errorf("write default config: %w", err)
+			return nil, fmt.Errorf("写入默认配置失败: %w", err)
 		}
 	}
 	routeManager := config.NewRouteFileManager(filepath.Dir(configPath))
 	activeFile, err := routeManager.EnsureActive(cfg.Route.ActiveFile)
 	if err != nil {
-		return nil, fmt.Errorf("initialize route files: %w", err)
+		return nil, fmt.Errorf("初始化规则文件失败: %w", err)
 	}
 	if cfg.Route.ActiveFile != activeFile {
 		cfg.Route.ActiveFile = activeFile
 		if err := manager.Save(cfg); err != nil {
-			return nil, fmt.Errorf("save active route file fallback: %w", err)
+			return nil, fmt.Errorf("保存当前规则文件回退失败: %w", err)
 		}
 	}
 
 	logManager, err := logger.NewManager(cfg.Log, logPath)
 	if err != nil {
-		return nil, fmt.Errorf("create logger: %w", err)
+		return nil, fmt.Errorf("创建日志管理器失败: %w", err)
 	}
 
 	collector := stats.NewCollector()
 	server := proxy.NewServer(cfg, collector)
 	server.SetLogger(logManager)
 	if err := applyRoutePolicy(server, routeManager, cfg); err != nil {
-		return nil, fmt.Errorf("load route policy: %w", err)
+		return nil, fmt.Errorf("加载路由策略失败: %w", err)
 	}
 	return &App{
 		configPath:    configPath,
@@ -412,7 +412,7 @@ func (a *App) DeleteRouteFile(name string) error {
 	defer a.mu.Unlock()
 
 	if name == a.cfg.Route.ActiveFile {
-		return errors.New("active route file cannot be deleted")
+		return errors.New("当前正在使用的规则文件不能删除")
 	}
 	return a.routeManager.Delete(name)
 }
@@ -436,7 +436,7 @@ func (a *App) SetActiveRouteFile(name string) error {
 	}
 	a.runtimeCfg.Route = cfg.Route
 	if a.logger != nil {
-		a.logger.Info(appSource, "route active file changed", zap.String("file", name))
+		a.logger.Info(appSource, "当前规则文件已切换", zap.String("file", name))
 	}
 	return nil
 }

@@ -33,7 +33,7 @@ func (m *RouteFileManager) Dir() string {
 // EnsureDefault creates default.rule when it is missing.
 func (m *RouteFileManager) EnsureDefault() error {
 	if err := os.MkdirAll(m.dir, 0o755); err != nil {
-		return fmt.Errorf("create route directory: %w", err)
+		return fmt.Errorf("创建规则目录失败: %w", err)
 	}
 	path, err := m.filePath(DefaultRouteFileName)
 	if err != nil {
@@ -42,7 +42,7 @@ func (m *RouteFileManager) EnsureDefault() error {
 	if _, err := os.Stat(path); err == nil {
 		return nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat default route file: %w", err)
+		return fmt.Errorf("检查默认规则文件失败: %w", err)
 	}
 	return m.Save(DefaultRouteFileName, DefaultRouteRuleSet())
 }
@@ -62,7 +62,7 @@ func (m *RouteFileManager) EnsureActive(active string) (string, error) {
 	if _, err := os.Stat(path); err == nil {
 		return active, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return "", fmt.Errorf("stat route file: %w", err)
+		return "", fmt.Errorf("检查规则文件失败: %w", err)
 	}
 	return DefaultRouteFileName, nil
 }
@@ -74,7 +74,7 @@ func (m *RouteFileManager) List(active string) ([]RouteFileInfo, error) {
 	}
 	entries, err := os.ReadDir(m.dir)
 	if err != nil {
-		return nil, fmt.Errorf("read route directory: %w", err)
+		return nil, fmt.Errorf("读取规则目录失败: %w", err)
 	}
 
 	files := make([]RouteFileInfo, 0, len(entries))
@@ -105,11 +105,11 @@ func (m *RouteFileManager) Load(name string) (RouteRuleSet, error) {
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return RouteRuleSet{}, fmt.Errorf("read route file: %w", err)
+		return RouteRuleSet{}, fmt.Errorf("读取规则文件失败: %w", err)
 	}
 	var set RouteRuleSet
 	if err := yaml.Unmarshal(data, &set); err != nil {
-		return RouteRuleSet{}, fmt.Errorf("parse route file yaml: %w", err)
+		return RouteRuleSet{}, fmt.Errorf("解析规则文件失败: %w", err)
 	}
 	if err := ValidateRouteRuleSet(set); err != nil {
 		return RouteRuleSet{}, err
@@ -131,7 +131,7 @@ func (m *RouteFileManager) Save(name string, set RouteRuleSet) error {
 	}
 	data, err := yaml.Marshal(set)
 	if err != nil {
-		return fmt.Errorf("marshal route file yaml: %w", err)
+		return fmt.Errorf("序列化规则文件失败: %w", err)
 	}
 	return writeFileAtomic(path, data)
 }
@@ -143,9 +143,9 @@ func (m *RouteFileManager) Create(name string) error {
 	}
 	path := filepath.Join(m.dir, name)
 	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("route file %q already exists", name)
+		return fmt.Errorf("规则文件 %s 已存在", name)
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("stat route file: %w", err)
+		return fmt.Errorf("检查规则文件失败: %w", err)
 	}
 	set := DefaultRouteRuleSet()
 	set.Name = strings.TrimSuffix(name, ".rule")
@@ -159,25 +159,31 @@ func (m *RouteFileManager) Delete(name string) error {
 		return err
 	}
 	if name == DefaultRouteFileName {
-		return errors.New("default route file cannot be deleted")
+		return errors.New("默认规则文件不能删除")
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *RouteFileManager) filePath(name string) (string, error) {
 	if m.dir == "" {
-		return "", errors.New("route directory is required")
+		return "", errors.New("规则目录未设置")
 	}
 	if err := ValidateRouteFileName(name); err != nil {
 		return "", err
 	}
 	cleanDir, err := filepath.Abs(m.dir)
 	if err != nil {
-		return "", fmt.Errorf("resolve route directory: %w", err)
+		return "", fmt.Errorf("解析规则目录失败: %w", err)
 	}
 	path := filepath.Join(cleanDir, name)
 	if filepath.Dir(path) != cleanDir {
-		return "", errors.New("route file path escapes config directory")
+		return "", errors.New("规则文件路径超出配置目录范围")
 	}
 	return path, nil
 }
@@ -208,24 +214,24 @@ func DefaultRouteRuleSet() RouteRuleSet {
 // ValidateRouteRuleSet checks file-level and rule-level route policy constraints.
 func ValidateRouteRuleSet(set RouteRuleSet) error {
 	if strings.TrimSpace(set.Name) == "" {
-		return errors.New("route rule set name is required")
+		return errors.New("规则集名称不能为空")
 	}
 	if set.Version < 1 {
-		return errors.New("route rule set version must be at least 1")
+		return errors.New("规则集版本号至少为 1")
 	}
 	if len(set.Rules) == 0 {
-		return errors.New("route rule set must contain at least one rule")
+		return errors.New("规则集至少需要包含一条规则")
 	}
 
 	seen := make(map[string]struct{}, len(set.Rules))
 	hasCatchAll := false
 	for index, rule := range set.Rules {
 		if err := validateRouteRule(rule); err != nil {
-			return fmt.Errorf("route rule %d: %w", index+1, err)
+			return fmt.Errorf("第 %d 条规则: %w", index+1, err)
 		}
 		id := strings.TrimSpace(rule.ID)
 		if _, ok := seen[id]; ok {
-			return fmt.Errorf("route rule id %q is duplicated", id)
+			return fmt.Errorf("规则 ID %s 重复", id)
 		}
 		seen[id] = struct{}{}
 		if rule.Enabled && rule.MatchType == "any" {
@@ -233,51 +239,51 @@ func ValidateRouteRuleSet(set RouteRuleSet) error {
 		}
 	}
 	if !hasCatchAll {
-		return errors.New("route rule set must contain an enabled catch-all rule")
+		return errors.New("规则集必须包含一条启用的兜底规则")
 	}
 	return nil
 }
 
 func validateRouteRule(rule RouteRule) error {
 	if strings.TrimSpace(rule.ID) == "" {
-		return errors.New("id is required")
+		return errors.New("规则 ID 不能为空")
 	}
 	if strings.TrimSpace(rule.Name) == "" {
-		return errors.New("name is required")
+		return errors.New("规则名称不能为空")
 	}
 	if rule.Priority <= 0 {
-		return errors.New("priority must be greater than 0")
+		return errors.New("优先级必须大于 0")
 	}
 	if len(rule.Protocols) == 0 {
-		return errors.New("protocols are required")
+		return errors.New("协议不能为空")
 	}
 	for _, protocol := range rule.Protocols {
 		switch strings.ToLower(strings.TrimSpace(protocol)) {
 		case "socks5", "http":
 		default:
-			return fmt.Errorf("unsupported protocol %q", protocol)
+			return fmt.Errorf("不支持的协议: %s", protocol)
 		}
 	}
 	switch rule.MatchType {
 	case "any", "ip", "cidr", "domain", "wildcard":
 	default:
-		return fmt.Errorf("unsupported match type %q", rule.MatchType)
+		return fmt.Errorf("不支持的匹配类型: %s", rule.MatchType)
 	}
 	if len(rule.Targets) == 0 {
-		return errors.New("targets are required")
+		return errors.New("目标地址不能为空")
 	}
 	for _, target := range rule.Targets {
 		if strings.TrimSpace(target) == "" {
-			return errors.New("target must not be empty")
+			return errors.New("目标地址不能包含空项")
 		}
 		switch rule.MatchType {
 		case "ip":
 			if net.ParseIP(strings.TrimSpace(target)) == nil {
-				return fmt.Errorf("invalid ip target %q", target)
+				return fmt.Errorf("无效的 IP 地址: %s", target)
 			}
 		case "cidr":
 			if _, _, err := net.ParseCIDR(strings.TrimSpace(target)); err != nil {
-				return fmt.Errorf("invalid cidr target %q", target)
+				return fmt.Errorf("无效的 CIDR 网段: %s", target)
 			}
 		}
 	}
@@ -287,14 +293,14 @@ func validateRouteRule(rule RouteRule) error {
 	case "intercept":
 	case "local_ip":
 		if net.ParseIP(strings.TrimSpace(rule.Outbound.LocalIP)) == nil {
-			return errors.New("local_ip outbound requires a valid local IP")
+			return errors.New("本地 IP 出口模式需要填写有效的本地 IP")
 		}
 	case "interface":
 		if strings.TrimSpace(rule.Outbound.Interface) == "" {
-			return errors.New("interface outbound requires an interface name")
+			return errors.New("网卡出口模式需要选择网卡名称")
 		}
 	default:
-		return fmt.Errorf("unsupported outbound mode %q", rule.Outbound.Mode)
+		return fmt.Errorf("不支持的出口模式: %s", rule.Outbound.Mode)
 	}
 	return nil
 }
@@ -302,11 +308,11 @@ func validateRouteRule(rule RouteRule) error {
 func writeFileAtomic(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("create route directory: %w", err)
+		return fmt.Errorf("创建规则目录失败: %w", err)
 	}
 	tmp, err := os.CreateTemp(dir, filepath.Base(path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temp route file: %w", err)
+		return fmt.Errorf("创建临时规则文件失败: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanup := true
@@ -317,18 +323,18 @@ func writeFileAtomic(path string, data []byte) error {
 	}()
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write temp route file: %w", err)
+		return fmt.Errorf("写入临时规则文件失败: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp route file: %w", err)
+		return fmt.Errorf("关闭临时规则文件失败: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return fmt.Errorf("set temp route file permissions: %w", err)
+		return fmt.Errorf("设置临时规则文件权限失败: %w", err)
 	}
 	existing, err := os.ReadFile(path)
 	hadExisting := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read current route file: %w", err)
+		return fmt.Errorf("读取当前规则文件失败: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
 		if hadExisting {
@@ -340,7 +346,7 @@ func writeFileAtomic(path string, data []byte) error {
 			if hadExisting {
 				_ = os.WriteFile(path, existing, 0o600)
 			}
-			return fmt.Errorf("replace route file: %w", err)
+			return fmt.Errorf("替换规则文件失败: %w", err)
 		}
 	}
 	cleanup = false

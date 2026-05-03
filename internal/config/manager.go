@@ -27,7 +27,7 @@ func (m *Manager) Path() string {
 // Load reads the YAML config file, applies defaults for missing fields, and validates it.
 func (m *Manager) Load() (Config, error) {
 	if m.path == "" {
-		return Config{}, errors.New("config path is required")
+		return Config{}, errors.New("配置文件路径未设置")
 	}
 
 	data, err := os.ReadFile(m.path)
@@ -37,7 +37,7 @@ func (m *Manager) Load() (Config, error) {
 
 	cfg := Default()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return Config{}, fmt.Errorf("parse config yaml: %w", err)
+		return Config{}, fmt.Errorf("解析配置文件失败: %w", err)
 	}
 
 	if err := Validate(cfg); err != nil {
@@ -50,7 +50,7 @@ func (m *Manager) Load() (Config, error) {
 // Save validates and writes the YAML config file.
 func (m *Manager) Save(cfg Config) error {
 	if m.path == "" {
-		return errors.New("config path is required")
+		return errors.New("配置文件路径未设置")
 	}
 	if err := Validate(cfg); err != nil {
 		return err
@@ -58,13 +58,13 @@ func (m *Manager) Save(cfg Config) error {
 
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return fmt.Errorf("marshal config yaml: %w", err)
+		return fmt.Errorf("序列化配置文件失败: %w", err)
 	}
 
 	dir := filepath.Dir(m.path)
 	if dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("create config directory: %w", err)
+			return fmt.Errorf("创建配置目录失败: %w", err)
 		}
 	}
 
@@ -79,7 +79,7 @@ func (m *Manager) writeWithBackup(data []byte) error {
 
 	tmp, err := os.CreateTemp(dir, filepath.Base(m.path)+".tmp-*")
 	if err != nil {
-		return fmt.Errorf("create temp config file: %w", err)
+		return fmt.Errorf("创建临时配置文件失败: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanupTmp := true
@@ -91,23 +91,23 @@ func (m *Manager) writeWithBackup(data []byte) error {
 
 	if _, err := tmp.Write(data); err != nil {
 		_ = tmp.Close()
-		return fmt.Errorf("write temp config file: %w", err)
+		return fmt.Errorf("写入临时配置文件失败: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close temp config file: %w", err)
+		return fmt.Errorf("关闭临时配置文件失败: %w", err)
 	}
 	if err := os.Chmod(tmpPath, 0o600); err != nil {
-		return fmt.Errorf("set temp config permissions: %w", err)
+		return fmt.Errorf("设置临时配置文件权限失败: %w", err)
 	}
 
 	existing, err := os.ReadFile(m.path)
 	hadExisting := err == nil
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("read current config for backup: %w", err)
+		return fmt.Errorf("读取当前配置文件用于备份失败: %w", err)
 	}
 	if hadExisting {
 		if err := os.WriteFile(m.backupPath(), existing, 0o600); err != nil {
-			return fmt.Errorf("write config backup: %w", err)
+			return fmt.Errorf("写入配置备份失败: %w", err)
 		}
 	}
 
@@ -121,7 +121,7 @@ func (m *Manager) writeWithBackup(data []byte) error {
 			if hadExisting {
 				_ = os.WriteFile(m.path, existing, 0o600)
 			}
-			return fmt.Errorf("replace config file: %w", err)
+			return fmt.Errorf("替换配置文件失败: %w", err)
 		}
 	}
 
