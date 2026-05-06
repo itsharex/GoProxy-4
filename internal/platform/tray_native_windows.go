@@ -9,14 +9,10 @@ import (
 )
 
 type nativeTrayMenu struct {
-	status *systray.MenuItem
-	ips    *systray.MenuItem
-	socks  *systray.MenuItem
-	http   *systray.MenuItem
-	show   *systray.MenuItem
-	start  *systray.MenuItem
-	stop   *systray.MenuItem
-	quit   *systray.MenuItem
+	show  *systray.MenuItem
+	start *systray.MenuItem
+	stop  *systray.MenuItem
+	quit  *systray.MenuItem
 }
 
 func (t *TrayManager) startNativeTray(icon []byte) {
@@ -37,17 +33,7 @@ func (t *TrayManager) startNativeTray(icon []byte) {
 				}
 			})
 
-			menu := nativeTrayMenu{
-				status: systray.AddMenuItem("服务状态: 已停止", "当前代理服务状态"),
-				ips:    systray.AddMenuItem("网卡 IP: 未检测到", "当前网卡 IP 地址"),
-				socks:  systray.AddMenuItem("SOCKS5: -", "SOCKS5 监听地址"),
-				http:   systray.AddMenuItem("HTTP: -", "HTTP CONNECT 监听地址"),
-			}
-			menu.status.Disable()
-			menu.ips.Disable()
-			menu.socks.Disable()
-			menu.http.Disable()
-			systray.AddSeparator()
+			menu := nativeTrayMenu{}
 			menu.show = systray.AddMenuItem("显示窗口", "显示 GoProxy 主窗口")
 			menu.start = systray.AddMenuItem("启动服务", "启动代理服务")
 			menu.stop = systray.AddMenuItem("停止服务", "停止代理服务")

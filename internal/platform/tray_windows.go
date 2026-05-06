@@ -39,56 +39,15 @@ func (t *TrayManager) updateNativeTray() {
 		return
 	}
 
-	if showStatusIP {
-		if menu.status != nil {
-			menu.status.Show()
-			if running {
-				menu.status.SetTitle("服务状态：运行中")
-			} else {
-				menu.status.SetTitle("服务状态：已停止")
-			}
-		}
-		if menu.ips != nil {
-			menu.ips.Show()
-			menu.ips.SetTitle("网卡 IP：" + trayIPSummary(localIPs))
-			if len(localIPs) > 0 {
-				menu.ips.SetTooltip(strings.Join(localIPs, "\n"))
-			} else {
-				menu.ips.SetTooltip("未检测到网卡 IP")
-			}
-		}
-		if menu.socks != nil {
-			menu.socks.Show()
-			menu.socks.SetTitle("SOCKS5：" + emptyAsDash(socksAddr))
-		}
-		if menu.http != nil {
-			menu.http.Show()
-			menu.http.SetTitle("HTTP：" + emptyAsDash(httpAddr))
-		}
-	} else {
-		if menu.status != nil {
-			menu.status.Hide()
-		}
-		if menu.ips != nil {
-			menu.ips.Hide()
-		}
-		if menu.socks != nil {
-			menu.socks.Hide()
-		}
-		if menu.http != nil {
-			menu.http.Hide()
-		}
-	}
+	systray.SetTooltip(trayTooltip(running, showStatusIP, localIPs, socksAddr, httpAddr))
 
 	if running {
 		menu.start.Disable()
 		menu.stop.Enable()
-		systray.SetTooltip("GoProxy - 服务运行中")
 		return
 	}
 	menu.start.Enable()
 	menu.stop.Disable()
-	systray.SetTooltip("GoProxy - 服务已停止")
 }
 
 func emptyAsDash(value string) string {
@@ -110,4 +69,21 @@ func trayIPSummary(localIPs []string) string {
 		return first
 	}
 	return fmt.Sprintf("%s 等 %d 个", first, len(localIPs))
+}
+
+func trayTooltip(running, showDetails bool, localIPs []string, socksAddr, httpAddr string) string {
+	state := "停"
+	if running {
+		state = "运行"
+	}
+	if !showDetails {
+		return "GoProxy " + state
+	}
+	lines := []string{
+		"GoProxy " + state,
+		"IP：" + trayIPSummary(localIPs),
+		"S5：" + emptyAsDash(socksAddr),
+		"HTTP：" + emptyAsDash(httpAddr),
+	}
+	return strings.Join(lines, "\n")
 }
