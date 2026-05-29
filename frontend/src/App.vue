@@ -81,7 +81,8 @@ const activePage = ref<PageKey>(enabledKeys.includes(initialHash) ? initialHash 
 const systemDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true)
 const serverActionLocked = ref(false)
 const localIPs = ref<string[]>([])
-const appVersion = 'V1.0.0'
+import { version } from '../package.json'
+const appVersion = `V${version}`
 
 const currentTheme = computed<'dark' | 'light'>(() => {
   const selected = config.draft?.ui.theme ?? 'dark'
