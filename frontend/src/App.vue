@@ -15,7 +15,7 @@ import {
   Square,
   Sun
 } from 'lucide-vue-next'
-import { darkTheme, NConfigProvider, NDialogProvider, NIcon, NMessageProvider, NPopover } from 'naive-ui'
+import { darkTheme, NConfigProvider, NDialogProvider, NIcon, NMessageProvider, NModal, NPopover } from 'naive-ui'
 import { getLocalIPAddresses, onEvent } from './backend/api'
 import Dashboard from './pages/Dashboard.vue'
 import ActiveConnectionsPage from './pages/ActiveConnectionsPage.vue'
@@ -82,7 +82,22 @@ const systemDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').match
 const serverActionLocked = ref(false)
 const localIPs = ref<string[]>([])
 import { version } from '../package.json'
+import { marked } from 'marked'
 const appVersion = `V${version}`
+const showChangelog = ref(false)
+const changelogHtml = ref('')
+
+async function openChangelog() {
+  if (!changelogHtml.value) {
+    try {
+      const res = await fetch(import.meta.env.BASE_URL + 'CHANGELOG.md')
+      changelogHtml.value = await marked(await res.text())
+    } catch {
+      changelogHtml.value = '<p>无法加载更新日志。</p>'
+    }
+  }
+  showChangelog.value = true
+}
 
 const currentTheme = computed<'dark' | 'light'>(() => {
   const selected = config.draft?.ui.theme ?? 'dark'
@@ -207,6 +222,9 @@ onMounted(async () => {
               <div class="version-panel">
                 <span class="version-label">版本</span>
                 <span class="version-value">{{ appVersion }}</span>
+                <button class="changelog-btn" type="button" title="查看更新日志" @click="openChangelog">
+                  <NIcon :component="Info" :size="12" />
+                </button>
               </div>
             </div>
           </aside>
@@ -248,6 +266,10 @@ onMounted(async () => {
             </div>
           </main>
         </div>
+
+        <NModal v-model:show="showChangelog" preset="card" title="更新日志" :style="{ maxWidth: '560px' }">
+          <div class="changelog-body" v-html="changelogHtml" />
+        </NModal>
       </NDialogProvider>
     </NMessageProvider>
   </NConfigProvider>
