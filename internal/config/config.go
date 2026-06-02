@@ -8,6 +8,20 @@ type Config struct {
 	Log    LogConfig    `yaml:"log" json:"log"`
 	UI     UIConfig     `yaml:"ui" json:"ui"`
 	Route  RouteConfig  `yaml:"route" json:"route"`
+	Web    WebConfig    `yaml:"web" json:"web"`
+}
+
+// WebConfig contains the web management panel settings.
+type WebConfig struct {
+	Enabled        bool   `yaml:"enabled" json:"enabled"`
+	Listen         string `yaml:"listen" json:"listen"`
+	Username       string `yaml:"username" json:"username"`
+	Password       string `yaml:"password" json:"-"`
+	JWTSecret      string `yaml:"jwt_secret" json:"-"`
+	JWTExpireHours int    `yaml:"jwt_expire_hours" json:"jwtExpireHours"`
+	TLSEnabled     bool   `yaml:"tls_enabled" json:"tlsEnabled"`
+	TLSCert        string `yaml:"tls_cert" json:"-"`
+	TLSKey         string `yaml:"tls_key" json:"-"`
 }
 
 // ServerConfig contains inbound protocol listener settings.
@@ -147,6 +161,13 @@ func Default() Config {
 		Route: RouteConfig{
 			Enabled:    false,
 			ActiveFile: "default.rule",
+		},
+		Web: WebConfig{
+			Enabled:        false,
+			Listen:         "0.0.0.0:9090",
+			Username:       "admin",
+			Password:       "",
+			JWTExpireHours: 24,
 		},
 	}
 }

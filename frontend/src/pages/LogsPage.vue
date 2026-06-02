@@ -28,7 +28,9 @@ const levels: Array<{ label: string; value: 'ALL' | LogEntry['level'] }> = [
 
 const routeRows = computed(() => {
   const query = logs.keyword.trim().toLowerCase()
-  return logs.entries
+  const entries = logs.entries
+  if (!Array.isArray(entries)) return []
+  return entries
     .filter((entry) => entry.source === 'route')
     .filter((entry) => logs.level === 'ALL' || entry.level === logs.level)
     .map(parseRouteLog)

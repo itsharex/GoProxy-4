@@ -5,148 +5,181 @@ import type {
   NetworkInterface,
   RouteFileInfo,
   RouteRuleSet,
+  SSESnapshot,
   ServerStatus,
   StatsSnapshot
 } from '../types'
-import {
-  AddUser,
-  ClearLogs,
-  CreateRouteFile,
-  DeleteRouteFile,
-  GetActiveConnections,
-  GetConfig,
-  GetLocalIPAddresses,
-  GetNetworkInterfaces,
-  GetRecentLogs,
-  GetServerStatus,
-  GetStats,
-  GetTrayState,
-  HideToTray,
-  ListRouteFiles,
-  LoadRouteFile,
-  QuitApp,
-  RemoveUser,
-  ResetUserPassword,
-  SaveRouteFile,
-  SaveConfig,
-  SetAuthEnabled,
-  SetActiveRouteFile,
-  ShowWindow,
-  StartServer,
-  StopServer
-} from '../../wailsjs/go/main/App'
-import { ClipboardSetText, EventsOn } from '../../wailsjs/runtime/runtime'
 
 type EventDisposer = () => void
 
-export function getConfig() {
-  return GetConfig() as unknown as Promise<AppConfig>
+function detectWails(): boolean {
+  try {
+    if (typeof window === 'undefined') return false
+    const w = window as any
+    return !!(w.go && w.go.main && w.runtime)
+  } catch {
+    return false
+  }
 }
 
-export function getLocalIPAddresses() {
-  return GetLocalIPAddresses() as unknown as Promise<string[]>
+let wailsModule: typeof import('./api-wails') | null = null
+let httpModule: typeof import('./api-http') | null = null
+
+async function getWails() {
+  if (!wailsModule) wailsModule = await import('./api-wails')
+  return wailsModule
 }
 
-export function getNetworkInterfaces() {
-  return GetNetworkInterfaces() as unknown as Promise<NetworkInterface[]>
+async function getHttp() {
+  if (!httpModule) httpModule = await import('./api-http')
+  return httpModule
 }
 
-export function saveConfig(config: AppConfig) {
-  return SaveConfig(config as unknown as Parameters<typeof SaveConfig>[0])
+export function isWails(): boolean {
+  return detectWails()
 }
 
-export function listRouteFiles() {
-  return ListRouteFiles() as unknown as Promise<RouteFileInfo[]>
+export function isWebLoggedIn(): boolean {
+  if (detectWails()) {
+    localStorage.removeItem('goproxy_token')
+    return true
+  }
+  return !!localStorage.getItem('goproxy_token')
 }
 
-export function loadRouteFile(name: string) {
-  return LoadRouteFile(name) as unknown as Promise<RouteRuleSet>
+export async function webLogin(username: string, password: string) {
+  if (detectWails()) return (await getWails()).webLogin(username, password)
+  return (await getHttp()).webLogin(username, password)
 }
 
-export function saveRouteFile(name: string, ruleSet: RouteRuleSet) {
-  return SaveRouteFile(name, ruleSet as unknown as Parameters<typeof SaveRouteFile>[1])
+export async function webCheckAuth(): Promise<boolean> {
+  if (detectWails()) return true
+  return (await getHttp()).webCheckAuth()
 }
 
-export function createRouteFile(name: string) {
-  return CreateRouteFile(name)
+export async function getConfig(): Promise<AppConfig> {
+  return detectWails() ? (await getWails()).getConfig() : (await getHttp()).getConfig()
 }
 
-export function deleteRouteFile(name: string) {
-  return DeleteRouteFile(name)
+export async function getLocalIPAddresses(): Promise<string[]> {
+  return detectWails() ? (await getWails()).getLocalIPAddresses() : (await getHttp()).getLocalIPAddresses()
 }
 
-export function setActiveRouteFile(name: string) {
-  return SetActiveRouteFile(name)
+export async function getNetworkInterfaces(): Promise<NetworkInterface[]> {
+  return detectWails() ? (await getWails()).getNetworkInterfaces() : (await getHttp()).getNetworkInterfaces()
 }
 
-export function startServer() {
-  return StartServer()
+export async function saveConfig(config: AppConfig): Promise<void> {
+  return detectWails() ? (await getWails()).saveConfig(config) : (await getHttp()).saveConfig(config)
 }
 
-export function stopServer() {
-  return StopServer()
+export async function listRouteFiles(): Promise<RouteFileInfo[]> {
+  return detectWails() ? (await getWails()).listRouteFiles() : (await getHttp()).listRouteFiles()
 }
 
-export function getServerStatus() {
-  return GetServerStatus() as unknown as Promise<ServerStatus>
+export async function loadRouteFile(name: string): Promise<RouteRuleSet> {
+  return detectWails() ? (await getWails()).loadRouteFile(name) : (await getHttp()).loadRouteFile(name)
 }
 
-export function getStats() {
-  return GetStats() as unknown as Promise<StatsSnapshot>
+export async function saveRouteFile(name: string, ruleSet: RouteRuleSet): Promise<void> {
+  return detectWails() ? (await getWails()).saveRouteFile(name, ruleSet) : (await getHttp()).saveRouteFile(name, ruleSet)
 }
 
-export function getActiveConnections() {
-  return GetActiveConnections() as unknown as Promise<ActiveConnection[]>
+export async function createRouteFile(name: string): Promise<void> {
+  return detectWails() ? (await getWails()).createRouteFile(name) : (await getHttp()).createRouteFile(name)
 }
 
-export function getRecentLogs(n: number) {
-  return GetRecentLogs(n) as unknown as Promise<LogEntry[]>
+export async function deleteRouteFile(name: string): Promise<void> {
+  return detectWails() ? (await getWails()).deleteRouteFile(name) : (await getHttp()).deleteRouteFile(name)
 }
 
-export function clearLogs() {
-  return ClearLogs()
+export async function setActiveRouteFile(name: string): Promise<void> {
+  return detectWails() ? (await getWails()).setActiveRouteFile(name) : (await getHttp()).setActiveRouteFile(name)
 }
 
-export function setAuthEnabled(enabled: boolean) {
-  return SetAuthEnabled(enabled)
+export async function startServer() {
+  return detectWails() ? (await getWails()).startServer() : (await getHttp()).startServer()
 }
 
-export function addUser(username: string, password: string) {
-  return AddUser(username, password)
+export async function stopServer() {
+  return detectWails() ? (await getWails()).stopServer() : (await getHttp()).stopServer()
 }
 
-export function removeUser(username: string) {
-  return RemoveUser(username)
+export async function getServerStatus(): Promise<ServerStatus> {
+  return detectWails() ? (await getWails()).getServerStatus() : (await getHttp()).getServerStatus()
 }
 
-export function resetUserPassword(username: string, password: string) {
-  return ResetUserPassword(username, password)
+export async function getStats(): Promise<StatsSnapshot> {
+  return detectWails() ? (await getWails()).getStats() : (await getHttp()).getStats()
 }
 
-export function getTrayState() {
-  return GetTrayState()
+export async function getActiveConnections(): Promise<ActiveConnection[]> {
+  return detectWails() ? (await getWails()).getActiveConnections() : (await getHttp()).getActiveConnections()
 }
 
-export function showWindow() {
-  return ShowWindow()
+export async function getRecentLogs(n: number): Promise<LogEntry[]> {
+  return detectWails() ? (await getWails()).getRecentLogs(n) : (await getHttp()).getRecentLogs(n)
 }
 
-export function hideToTray() {
-  return HideToTray()
+export async function clearLogs(): Promise<void> {
+  return detectWails() ? (await getWails()).clearLogs() : (await getHttp()).clearLogs()
 }
 
-export function quitApp() {
-  return QuitApp()
+export async function setAuthEnabled(enabled: boolean): Promise<void> {
+  return detectWails() ? (await getWails()).setAuthEnabled(enabled) : (await getHttp()).setAuthEnabled(enabled)
 }
 
-export function copyText(text: string) {
-  return ClipboardSetText(text)
+export async function addUser(username: string, password: string): Promise<void> {
+  return detectWails() ? (await getWails()).addUser(username, password) : (await getHttp()).addUser(username, password)
+}
+
+export async function removeUser(username: string): Promise<void> {
+  return detectWails() ? (await getWails()).removeUser(username) : (await getHttp()).removeUser(username)
+}
+
+export async function resetUserPassword(username: string, password: string): Promise<void> {
+  return detectWails() ? (await getWails()).resetUserPassword(username, password) : (await getHttp()).resetUserPassword(username, password)
+}
+
+export async function getTrayState() {
+  return detectWails() ? (await getWails()).getTrayState() : (await getHttp()).getTrayState()
+}
+
+export async function showWindow(): Promise<void> {
+  return detectWails() ? (await getWails()).showWindow() : (await getHttp()).showWindow()
+}
+
+export async function hideToTray(): Promise<void> {
+  return detectWails() ? (await getWails()).hideToTray() : (await getHttp()).hideToTray()
+}
+
+export async function quitApp(): Promise<void> {
+  return detectWails() ? (await getWails()).quitApp() : (await getHttp()).quitApp()
+}
+
+export async function copyText(text: string): Promise<void> {
+  return detectWails() ? (await getWails()).copyText(text) : (await getHttp()).copyText(text)
 }
 
 export function onEvent<T>(eventName: string, callback: (payload: T) => void): EventDisposer {
-  try {
-    return EventsOn(eventName, (payload: T) => callback(payload))
-  } catch {
-    return () => undefined
+  if (detectWails()) {
+    getWails().then((m) => m.onEvent(eventName, callback))
+    return () => {}
   }
+  let disposer: EventDisposer = () => {}
+  getHttp().then((m) => {
+    disposer = m.onEvent(eventName, callback)
+  })
+  return () => disposer()
 }
+
+export function onServerSnapshot(callback: (snapshot: SSESnapshot) => void): EventDisposer {
+  if (detectWails()) return () => {}
+  let disposer: EventDisposer = () => {}
+  getHttp().then((m) => {
+    disposer = m.onServerSnapshot(callback)
+  })
+  return () => disposer()
+}
+
+export { type EventDisposer }

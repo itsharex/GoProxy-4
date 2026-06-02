@@ -51,6 +51,12 @@ func Validate(cfg Config) error {
 		return fmt.Errorf("当前规则文件无效: %w", err)
 	}
 
+	if cfg.Web.Enabled {
+		if err := validateWeb(cfg.Web); err != nil {
+			return err
+		}
+	}
+
 	if cfg.Server.SOCKS5.Enabled && cfg.Server.HTTP.Enabled {
 		if cfg.Server.SOCKS5.Host == cfg.Server.HTTP.Host && cfg.Server.SOCKS5.Port == cfg.Server.HTTP.Port {
 			return errors.New("SOCKS5 和 HTTP CONNECT 不能使用完全相同的监听地址和端口")
@@ -170,6 +176,47 @@ func validateUI(ui UIConfig) error {
 	}
 	if ui.Language == "" {
 		return errors.New("界面语言不能为空")
+	}
+	return nil
+}
+
+func validateWeb(web WebConfig) error {
+	if web.Listen == "" {
+		return errors.New("Web 管理面板监听地址不能为空")
+	}
+	host, port, err := net.SplitHostPort(web.Listen)
+	if err != nil {
+		return fmt.Errorf("Web 管理面板监听地址格式无效，应为 host:port: %w", err)
+	}
+	if host == "" {
+		return errors.New("Web 管理面板监听主机不能为空")
+	}
+	if p := net.ParseIP(host); host != "0.0.0.0" && host != "[::]" && host != "::" && p == nil {
+		return errors.New("Web 管理面板监听地址必须是有效的 IP 地址")
+	}
+	portNum := 0
+	for _, c := range port {
+		if c < '0' || c > '9' {
+			return errors.New("Web 管理面板端口必须为数字")
+		}
+		portNum = portNum*10 + int(c-'0')
+	}
+	if portNum < 1 || portNum > 65535 {
+		return errors.New("Web 管理面板端口必须在 1 到 65535 之间")
+	}
+	if strings.TrimSpace(web.Username) == "" {
+		return errors.New("Web 管理面板用户名不能为空")
+	}
+	if web.JWTExpireHours <= 0 {
+		return errors.New("Web 面板 Token 有效期必须大于 0 小时")
+	}
+	if web.TLSEnabled {
+		if strings.TrimSpace(web.TLSCert) == "" {
+			return errors.New("启用 TLS 时证书路径不能为空")
+		}
+		if strings.TrimSpace(web.TLSKey) == "" {
+			return errors.New("启用 TLS 时私钥路径不能为空")
+		}
 	}
 	return nil
 }

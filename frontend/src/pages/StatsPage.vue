@@ -32,6 +32,25 @@ function formatRate(value: number) {
   return `${formatBytes(value)}/s`
 }
 
+function padRate(value: number): string {
+  let num: string
+  let unit: string
+  if (value < 1024) {
+    num = value.toFixed(1)
+    unit = 'B'
+  } else {
+    const units = ['KB', 'MB', 'GB', 'TB']
+    let next = value / 1024
+    unit = units[0]
+    for (let i = 1; i < units.length && next >= 1024; i += 1) {
+      next /= 1024
+      unit = units[i]
+    }
+    num = next.toFixed(next >= 10 ? 1 : 2)
+  }
+  return `${num.padStart(6)} ${unit}/s`.padEnd(13)
+}
+
 onMounted(async () => {
   await server.refresh()
 })
@@ -56,12 +75,12 @@ onMounted(async () => {
       <div class="card">
         <div class="card-label">上传总量</div>
         <div class="card-val blue">{{ formatBytes(server.stats.uploadBytes) }}</div>
-        <div class="card-sub">峰值 {{ formatRate(peakUpload) }}</div>
+        <div class="card-sub rate-fixed">峰值 {{ padRate(peakUpload) }}</div>
       </div>
       <div class="card">
         <div class="card-label">下载总量</div>
         <div class="card-val amber">{{ formatBytes(server.stats.downloadBytes) }}</div>
-        <div class="card-sub">峰值 {{ formatRate(peakDownload) }}</div>
+        <div class="card-sub rate-fixed">峰值 {{ padRate(peakDownload) }}</div>
       </div>
       <div class="card">
         <div class="card-label">认证失败</div>

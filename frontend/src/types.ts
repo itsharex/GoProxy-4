@@ -40,6 +40,7 @@ export interface AppConfig {
   log: LogConfig
   ui: UIConfig
   route: RouteConfig
+  web: WebConfig
 }
 
 export interface AuthConfig {
@@ -96,9 +97,23 @@ export interface ActiveConnection {
   openedAt: string
 }
 
+export interface SSESnapshot {
+  status: ServerStatus
+  stats: StatsSnapshot
+  connections: ActiveConnection[]
+}
+
 export interface RouteConfig {
   enabled: boolean
   activeFile: string
+}
+
+export interface WebConfig {
+  enabled: boolean
+  listen: string
+  username: string
+  jwtExpireHours: number
+  tlsEnabled: boolean
 }
 
 export interface RouteRuleSet {

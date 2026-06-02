@@ -16,12 +16,13 @@ import {
   Sun
 } from 'lucide-vue-next'
 import { darkTheme, NConfigProvider, NDialogProvider, NIcon, NMessageProvider, NModal, NPopover } from 'naive-ui'
-import { getLocalIPAddresses, onEvent } from './backend/api'
+import { getLocalIPAddresses, isWails, isWebLoggedIn, onEvent, onServerSnapshot } from './backend/api'
 import Dashboard from './pages/Dashboard.vue'
 import ActiveConnectionsPage from './pages/ActiveConnectionsPage.vue'
 import AuthPage from './pages/AuthPage.vue'
 import ConfigPage from './pages/ConfigPage.vue'
 import LogsPage from './pages/LogsPage.vue'
+import LoginPage from './pages/LoginPage.vue'
 import RouteRulesPage from './pages/RouteRulesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
 import StatsPage from './pages/StatsPage.vue'
@@ -152,7 +153,7 @@ async function toggleServer() {
   }
 }
 
-onMounted(async () => {
+async function loadAppData() {
   await Promise.all([config.load(), server.refresh(), logs.load()])
   try {
     localIPs.value = await getLocalIPAddresses()
@@ -162,6 +163,12 @@ onMounted(async () => {
   onEvent<LogEntry>('proxy:log', logs.append)
   onEvent<ServerStatus>('proxy:status', server.setStatus)
   onEvent<StatsSnapshot>('proxy:stats', server.setStats)
+  onServerSnapshot(server.applySnapshot)
+}
+
+onMounted(() => {
+  if (!isWails() && !isWebLoggedIn()) return
+  void loadAppData()
 
   const media = window.matchMedia?.('(prefers-color-scheme: dark)')
   media?.addEventListener('change', (event) => {
@@ -174,7 +181,8 @@ onMounted(async () => {
   <NConfigProvider :theme="naiveTheme">
     <NMessageProvider>
       <NDialogProvider>
-        <div class="app-shell" :data-theme="currentTheme">
+        <LoginPage v-if="!isWails() && !isWebLoggedIn()" />
+        <div v-else class="app-shell" :data-theme="currentTheme">
           <aside class="sidebar">
             <div class="nav-logo">
               <span class="live-dot" :class="{ stopped: !server.status.running }" />

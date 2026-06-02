@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NSpin } from 'naive-ui'
 import { useConfigStore } from '../stores/config'
 import { useServerStore } from '../stores/server'
+import { isWails } from '../backend/api'
 import type { ActiveConnection } from '../types'
 
 const server = useServerStore()
@@ -34,6 +35,25 @@ function formatBytes(value: number): string {
 
 function formatRate(value: number): string {
   return `${formatBytes(value)}/s`
+}
+
+function padRate(value: number): string {
+  let num: string
+  let unit: string
+  if (value < 1024) {
+    num = value.toFixed(1)
+    unit = 'B'
+  } else {
+    const units = ['KB', 'MB', 'GB', 'TB']
+    let next = value / 1024
+    unit = units[0]
+    for (let i = 1; i < units.length && next >= 1024; i += 1) {
+      next /= 1024
+      unit = units[i]
+    }
+    num = next.toFixed(next >= 10 ? 1 : 2)
+  }
+  return `${num.padStart(6)} ${unit}/s`.padEnd(13)
 }
 
 function formatProtocol(protocol: string): string {
@@ -74,10 +94,9 @@ function updateConnectionRates(connections: ActiveConnection[]) {
 onMounted(async () => {
   await server.refresh()
   updateConnectionRates(server.activeConnections)
-  timer = window.setInterval(() => {
-    void server.refresh().then(() => {
-      updateConnectionRates(server.activeConnections)
-    })
+  timer = window.setInterval(async () => {
+    if (isWails()) await server.refresh()
+    updateConnectionRates(server.activeConnections)
   }, 1000)
 })
 
@@ -116,8 +135,8 @@ onUnmounted(() => {
               <td>{{ conn.targetAddr || '-' }}</td>
               <td>{{ conn.routeRuleName || '-' }}</td>
               <td>{{ conn.outboundIface || conn.outboundIp || '-' }}</td>
-              <td>{{ formatRate(conn.uploadRate) }}</td>
-              <td>{{ formatRate(conn.downloadRate) }}</td>
+              <td class="rate-fixed">{{ padRate(conn.uploadRate) }}</td>
+              <td class="rate-fixed">{{ padRate(conn.downloadRate) }}</td>
               <td>{{ formatBytes(conn.uploadBytes) }}</td>
               <td>{{ formatBytes(conn.downloadBytes) }}</td>
               <td>{{ shortTime(conn.openedAt) }}</td>

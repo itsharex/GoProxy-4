@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { getActiveConnections, getServerStatus, getStats, startServer, stopServer } from '../backend/api'
-import type { ActiveConnection, ServerStatus, StatsSnapshot, TrafficSample } from '../types'
+import type { ActiveConnection, SSESnapshot, ServerStatus, StatsSnapshot, TrafficSample } from '../types'
 import { friendlyError } from '../utils/errors'
 
 const emptyStatus: ServerStatus = {
@@ -85,6 +85,17 @@ export const useServerStore = defineStore('server', () => {
     trafficHistory.value = [...trafficHistory.value, sample].slice(-60)
   }
 
+  function applySnapshot(snapshot: SSESnapshot) {
+    status.value = snapshot.status
+    stats.value = snapshot.stats
+    activeConnections.value = snapshot.connections
+    const sample: TrafficSample = {
+      ...snapshot.stats,
+      time: new Date().toLocaleTimeString('zh-CN', { hour12: false })
+    }
+    trafficHistory.value = [...trafficHistory.value, sample].slice(-60)
+  }
+
   return {
     status,
     stats,
@@ -97,6 +108,7 @@ export const useServerStore = defineStore('server', () => {
     start,
     stop,
     setStatus,
-    setStats
+    setStats,
+    applySnapshot
   }
 })

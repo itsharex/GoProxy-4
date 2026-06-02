@@ -47,6 +47,26 @@ export namespace config {
 		}
 	}
 	
+	export class WebConfig {
+	    enabled: boolean;
+	    listen: string;
+	    username: string;
+	    jwtExpireHours: number;
+	    tlsEnabled: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.enabled = source["enabled"];
+	        this.listen = source["listen"];
+	        this.username = source["username"];
+	        this.jwtExpireHours = source["jwtExpireHours"];
+	        this.tlsEnabled = source["tlsEnabled"];
+	    }
+	}
 	export class RouteConfig {
 	    enabled: boolean;
 	    activeFile: string;
@@ -176,6 +196,7 @@ export namespace config {
 	    log: LogConfig;
 	    ui: UIConfig;
 	    route: RouteConfig;
+	    web: WebConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -189,6 +210,7 @@ export namespace config {
 	        this.log = this.convertValues(source["log"], LogConfig);
 	        this.ui = this.convertValues(source["ui"], UIConfig);
 	        this.route = this.convertValues(source["route"], RouteConfig);
+	        this.web = this.convertValues(source["web"], WebConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -329,6 +351,7 @@ export namespace config {
 		    return a;
 		}
 	}
+	
 	
 
 }

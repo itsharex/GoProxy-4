@@ -5,6 +5,7 @@ import { useConfigStore } from '../stores/config'
 import { useLogStore } from '../stores/logs'
 import { useServerStore } from '../stores/server'
 import TrafficRateCanvas from '../components/TrafficRateCanvas.vue'
+import { isWails } from '../backend/api'
 import type { LogEntry } from '../types'
 
 const server = useServerStore()
@@ -67,7 +68,9 @@ const clientRows = computed(() => {
   return [...grouped.values()].sort((a, b) => b.count - a.count || b.downloadRate - a.downloadRate).slice(0, 6)
 })
 const dashboardLogs = computed(() => {
-  return [...logs.entries]
+  const entries = logs.entries
+  if (!Array.isArray(entries)) return []
+  return [...entries]
     .reverse()
     .filter((entry) => logLevel.value === 'ALL' || entry.level === logLevel.value)
     .slice(0, 40)
@@ -87,6 +90,25 @@ function formatBytes(value: number): string {
 
 function formatRate(value: number): string {
   return `${formatBytes(value)}/s`
+}
+
+function padRate(value: number): string {
+  let num: string
+  let unit: string
+  if (value < 1024) {
+    num = value.toFixed(1)
+    unit = 'B'
+  } else {
+    const units = ['KB', 'MB', 'GB', 'TB']
+    let next = value / 1024
+    unit = units[0]
+    for (let i = 1; i < units.length && next >= 1024; i += 1) {
+      next /= 1024
+      unit = units[i]
+    }
+    num = next.toFixed(next >= 10 ? 1 : 2)
+  }
+  return `${num.padStart(6)} ${unit}/s`.padEnd(13)
 }
 
 function connectionTraffic(upload: number, download: number): string {
@@ -120,7 +142,7 @@ function levelClass(level: LogEntry['level']) {
 }
 
 async function tick() {
-  await server.refresh()
+  if (isWails()) await server.refresh()
   lastBytes.value = { up: server.stats.uploadBytes, down: server.stats.downloadBytes }
   updateClientRates()
   chartTime.value = new Date().toLocaleTimeString('zh-CN', { hour12: false })
@@ -181,12 +203,12 @@ onUnmounted(() => {
           </article>
           <article class="card">
             <div class="card-label">上传速率</div>
-            <div class="card-val blue">{{ formatRate(uploadRate) }}</div>
+            <div class="card-val blue rate-fixed">{{ padRate(uploadRate) }}</div>
             <div class="card-sub">本次运行 {{ formatBytes(server.stats.uploadBytes) }}</div>
           </article>
           <article class="card">
             <div class="card-label">下载速率</div>
-            <div class="card-val amber">{{ formatRate(downloadRate) }}</div>
+            <div class="card-val amber rate-fixed">{{ padRate(downloadRate) }}</div>
             <div class="card-sub">本次运行 {{ formatBytes(server.stats.downloadBytes) }}</div>
           </article>
           <article class="card">
@@ -222,8 +244,8 @@ onUnmounted(() => {
             <div v-for="client in clientRows" :key="client.clientIp" class="client-item">
               <strong>{{ client.clientIp }}</strong>
               <span>{{ client.count }}</span>
-              <span>{{ formatRate(client.uploadRate) }}</span>
-              <span>{{ formatRate(client.downloadRate) }}</span>
+              <span class="rate-fixed">{{ padRate(client.uploadRate) }}</span>
+              <span class="rate-fixed">{{ padRate(client.downloadRate) }}</span>
               <span :title="clientTrafficTitle(client.uploadBytes, client.downloadBytes)">
                 {{ connectionTraffic(client.uploadBytes, client.downloadBytes) }}
               </span>
