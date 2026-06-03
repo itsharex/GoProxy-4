@@ -465,7 +465,6 @@ input {
   flex-direction: column;
   gap: 18px;
   width: 100%;
-  max-width: 1280px;
 }
 
 .settings-page {
@@ -481,7 +480,6 @@ input {
   --settings-accent-light: color-mix(in srgb, var(--accent2) 12%, transparent);
   --settings-toggle-bg: color-mix(in srgb, var(--muted) 38%, transparent);
   --settings-toggle-active: var(--accent2);
-  max-width: 760px;
   padding: 22px 0 28px;
   margin: 0 auto;
 }

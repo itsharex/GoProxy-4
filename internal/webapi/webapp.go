@@ -166,12 +166,6 @@ func (a *WebApp) ChangePassword(username, oldPassword, newPassword string) (stri
 		return "", time.Time{}, fmt.Errorf("更新密码失败: %w", err)
 	}
 
-	newSecret := generateRandomSecret()
-	if err := a.store.UpdateJWTSecret(newSecret); err != nil {
-		return "", time.Time{}, fmt.Errorf("更新 JWT 密钥失败: %w", err)
-	}
-	a.auth.SetSecret([]byte(newSecret))
-
 	token, err := a.auth.Authenticate(username, newPassword)
 	if err != nil {
 		return "", time.Time{}, err

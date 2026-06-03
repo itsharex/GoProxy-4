@@ -19,6 +19,19 @@ const chartTime = ref('--')
 const logLevel = ref<'ALL' | LogEntry['level']>('ALL')
 let timer: number | undefined
 
+const protocolRows = computed(() => {
+  const rows = new Map<string, { protocol: string; conns: number; upload: number; download: number }>()
+  for (const conn of server.activeConnections) {
+    const key = conn.protocol || 'UNKNOWN'
+    const row = rows.get(key) ?? { protocol: key, conns: 0, upload: 0, download: 0 }
+    row.conns += 1
+    row.upload += conn.uploadBytes
+    row.download += conn.downloadBytes
+    rows.set(key, row)
+  }
+  return Array.from(rows.values()).sort((a, b) => b.conns - a.conns)
+})
+
 const logTabs: Array<{ label: string; value: 'ALL' | LogEntry['level'] }> = [
   { label: '全部', value: 'ALL' },
   { label: 'INFO', value: 'INFO' },
@@ -252,6 +265,34 @@ onUnmounted(() => {
             </div>
             <div v-if="clientRows.length === 0" class="empty-log compact">暂无客户端连接</div>
           </div>
+        </section>
+
+        <section class="panel protocol-panel">
+          <div class="panel-head">
+            <h3>协议分布</h3>
+            <span class="tag">ACTIVE</span>
+          </div>
+          <table class="conn-table">
+            <thead>
+              <tr>
+                <th>协议</th>
+                <th>连接数</th>
+                <th>上传</th>
+                <th>下载</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="protocolRows.length === 0">
+                <td colspan="4" class="table-empty">暂无活跃连接</td>
+              </tr>
+              <tr v-for="row in protocolRows" :key="row.protocol">
+                <td>{{ row.protocol }}</td>
+                <td>{{ row.conns }}</td>
+                <td>{{ formatBytes(row.upload) }}</td>
+                <td>{{ formatBytes(row.download) }}</td>
+              </tr>
+            </tbody>
+          </table>
         </section>
 
         <section class="panel dashboard-log-panel">

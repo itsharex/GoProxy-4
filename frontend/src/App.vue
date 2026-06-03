@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import {
-  BarChart3,
   FileText,
   Info,
   LayoutDashboard,
@@ -25,13 +24,12 @@ import LogsPage from './pages/LogsPage.vue'
 import LoginPage from './pages/LoginPage.vue'
 import RouteRulesPage from './pages/RouteRulesPage.vue'
 import SettingsPage from './pages/SettingsPage.vue'
-import StatsPage from './pages/StatsPage.vue'
 import { useConfigStore } from './stores/config'
 import { useLogStore } from './stores/logs'
 import { useServerStore } from './stores/server'
 import type { LogEntry, ServerStatus, StatsSnapshot } from './types'
 
-type PageKey = 'dashboard' | 'connections' | 'logs' | 'stats' | 'config' | 'routes' | 'auth' | 'settings'
+type PageKey = 'dashboard' | 'connections' | 'logs' | 'config' | 'routes' | 'auth' | 'settings'
 
 interface NavItem {
   key: PageKey
@@ -50,8 +48,7 @@ const navGroups: Array<{ title: string; items: NavItem[] }> = [
     items: [
       { key: 'dashboard', label: '仪表盘', icon: LayoutDashboard },
       { key: 'connections', label: '活跃连接', icon: Network },
-      { key: 'logs', label: '实时日志', icon: FileText },
-      { key: 'stats', label: '流量统计', icon: BarChart3 }
+      { key: 'logs', label: '实时日志', icon: FileText }
     ]
   },
   {
@@ -69,7 +66,6 @@ const pageLabels: Record<PageKey, string> = {
   dashboard: '仪表盘',
   connections: '活跃连接',
   logs: '实时日志',
-  stats: '流量统计',
   config: '服务配置',
   routes: '路由规则',
   auth: '认证管理',
@@ -291,7 +287,6 @@ onMounted(async () => {
               <Dashboard v-if="activePage === 'dashboard'" />
               <ActiveConnectionsPage v-else-if="activePage === 'connections'" />
               <LogsPage v-else-if="activePage === 'logs'" />
-              <StatsPage v-else-if="activePage === 'stats'" />
               <RouteRulesPage v-else-if="activePage === 'routes'" />
               <AuthPage v-else-if="activePage === 'auth'" />
               <SettingsPage v-else-if="activePage === 'settings'" />

@@ -79,8 +79,16 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
 
+	// 确保在出现错误时关闭数据库连接
+	var closeDBOnError bool
+	defer func() {
+		if closeDBOnError && s != nil {
+			s.Close()
+		}
+	}()
+
 	if err := s.ImportFromYAML(configPath); err != nil {
-		s.Close()
+		closeDBOnError = true
 		return nil, fmt.Errorf("数据迁移失败: %w", err)
 	}
 
@@ -90,7 +98,7 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 
 	logManager, err := logger.NewManager(cfg.Log, logPath)
 	if err != nil {
-		s.Close()
+		closeDBOnError = true
 		return nil, fmt.Errorf("创建日志管理器失败: %w", err)
 	}
 
@@ -98,10 +106,11 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 	server := proxy.NewServer(cfg, collector)
 	server.SetLogger(logManager)
 	if err := applyAppRoutePolicy(server, s, cfg); err != nil {
-		s.Close()
+		closeDBOnError = true
 		return nil, fmt.Errorf("加载路由策略失败: %w", err)
 	}
 
+	// 成功返回，不关闭数据库连接，将其所有权转移给 App
 	return &App{
 		configPath:    configPath,
 		logPath:       logPath,

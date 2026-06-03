@@ -116,33 +116,31 @@ onUnmounted(() => {
         <table class="conn-table active-conn-table">
           <thead>
             <tr>
-              <th>协议</th>
-              <th>客户端</th>
-              <th>目标</th>
-              <th>命中规则</th>
-              <th>出口</th>
-              <th>实时上行</th>
-              <th>实时下行</th>
-              <th>累计上行</th>
-              <th>累计下行</th>
-              <th>建立时间</th>
+              <th class="col-protocol">协议</th>
+              <th class="col-client">客户端</th>
+              <th class="col-target">目标</th>
+              <th class="col-rule">命中规则</th>
+              <th class="col-outbound">出口</th>
+              <th class="col-upload-rate">实时上行</th>
+              <th class="col-download-rate">实时下行</th>
+              <th class="col-upload-total">累计上行</th>
+              <th class="col-download-total">累计下行</th>
             </tr>
           </thead>
           <tbody>
             <tr v-for="conn in rows" :key="conn.id">
-              <td><span class="proto" :class="protocolClass(conn.protocol)">{{ formatProtocol(conn.protocol) }}</span></td>
-              <td>{{ conn.clientAddr }}</td>
-              <td>{{ conn.targetAddr || '-' }}</td>
-              <td>{{ conn.routeRuleName || '-' }}</td>
-              <td>{{ conn.outboundIface || conn.outboundIp || '-' }}</td>
-              <td class="rate-fixed">{{ padRate(conn.uploadRate) }}</td>
-              <td class="rate-fixed">{{ padRate(conn.downloadRate) }}</td>
-              <td>{{ formatBytes(conn.uploadBytes) }}</td>
-              <td>{{ formatBytes(conn.downloadBytes) }}</td>
-              <td>{{ shortTime(conn.openedAt) }}</td>
+              <td class="col-protocol"><span class="proto" :class="protocolClass(conn.protocol)">{{ formatProtocol(conn.protocol) }}</span></td>
+              <td class="col-client">{{ conn.clientAddr }}</td>
+              <td class="col-target">{{ conn.targetAddr || '-' }}</td>
+              <td class="col-rule">{{ conn.routeRuleName || '-' }}</td>
+              <td class="col-outbound">{{ conn.outboundIface || conn.outboundIp || '-' }}</td>
+              <td class="col-upload-rate rate-fixed">{{ padRate(conn.uploadRate) }}</td>
+              <td class="col-download-rate rate-fixed">{{ padRate(conn.downloadRate) }}</td>
+              <td class="col-upload-total">{{ formatBytes(conn.uploadBytes) }}</td>
+              <td class="col-download-total">{{ formatBytes(conn.downloadBytes) }}</td>
             </tr>
             <tr v-if="rows.length === 0">
-              <td colspan="10" class="table-empty">暂无活跃连接</td>
+              <td colspan="9" class="table-empty">暂无活跃连接</td>
             </tr>
           </tbody>
         </table>
@@ -150,3 +148,41 @@ onUnmounted(() => {
     </NSpin>
   </section>
 </template>
+
+<style scoped>
+.active-conn-table .col-protocol {
+  width: 80px;
+}
+
+.active-conn-table .col-client {
+  width: 150px;
+}
+
+.active-conn-table .col-target {
+  width: auto;
+}
+
+.active-conn-table .col-rule {
+  width: 100px;
+}
+
+.active-conn-table .col-outbound {
+  width: 130px;
+}
+
+.active-conn-table .col-upload-rate {
+  width: 100px;
+}
+
+.active-conn-table .col-download-rate {
+  width: 100px;
+}
+
+.active-conn-table .col-upload-total {
+  width: 100px;
+}
+
+.active-conn-table .col-download-total {
+  width: 100px;
+}
+</style>
