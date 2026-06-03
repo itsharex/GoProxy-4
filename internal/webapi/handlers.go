@@ -36,15 +36,64 @@ func (h *handlers) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expiresAt := time.Now().Add(time.Duration(h.app.GetConfig().Web.JWTExpireHours) * time.Hour)
+	mustChangePwd := h.app.MustChangePwd(req.Username)
+	expireHours := h.app.GetJWTExpireHours()
+	expiresAt := time.Now().Add(time.Duration(expireHours) * time.Hour)
 	writeJSON(w, http.StatusOK, loginResponse{
-		Token:     token,
-		ExpiresAt: expiresAt.Format(time.RFC3339),
+		Token:         token,
+		ExpiresAt:     expiresAt.Format(time.RFC3339),
+		Username:      req.Username,
+		MustChangePwd: mustChangePwd,
 	})
 }
 
 func (h *handlers) checkAuth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, checkResponse{Valid: true})
+	username := r.Header.Get("X-User-Name")
+	mustChangePwd := false
+	if username != "" {
+		mustChangePwd = h.app.MustChangePwd(username)
+	}
+	writeJSON(w, http.StatusOK, checkResponse{
+		Valid:         true,
+		Username:      username,
+		MustChangePwd: mustChangePwd,
+	})
+}
+
+func (h *handlers) changePassword(w http.ResponseWriter, r *http.Request) {
+	username := r.Header.Get("X-User-Name")
+	if username == "" {
+		writeError(w, http.StatusUnauthorized, "未提供用户信息")
+		return
+	}
+
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "请求格式无效")
+		return
+	}
+	if req.OldPassword == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "旧密码和新密码不能为空")
+		return
+	}
+	if len(req.NewPassword) < 6 {
+		writeError(w, http.StatusBadRequest, "新密码长度不能少于 6 位")
+		return
+	}
+	if req.OldPassword == req.NewPassword {
+		writeError(w, http.StatusBadRequest, "新密码不能与旧密码相同")
+		return
+	}
+
+	token, expiresAt, err := h.app.ChangePassword(username, req.OldPassword, req.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, changePasswordResponse{
+		Token:     token,
+		ExpiresAt: expiresAt.Format(time.RFC3339),
+	})
 }
 
 func (h *handlers) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -267,6 +316,7 @@ func RegisterRoutes(mux *http.ServeMux, app *WebApp) {
 
 	mux.HandleFunc("POST /api/v1/auth/login", h.login)
 	mux.HandleFunc("GET /api/v1/auth/check", authMiddleware(auth, h.checkAuth))
+	mux.HandleFunc("PUT /api/v1/auth/change-password", authMiddleware(auth, h.changePassword))
 
 	protected := []struct {
 		method  string

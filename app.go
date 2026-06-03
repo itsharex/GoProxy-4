@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -17,6 +16,7 @@ import (
 	"gitee.com/jiuhuidalan1/goproxy/internal/platform"
 	"gitee.com/jiuhuidalan1/goproxy/internal/proxy"
 	"gitee.com/jiuhuidalan1/goproxy/internal/stats"
+	"gitee.com/jiuhuidalan1/goproxy/internal/store"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 	"go.uber.org/zap"
 )
@@ -35,7 +35,7 @@ type App struct {
 	configPath    string
 	logPath       string
 	configManager *config.Manager
-	routeManager  *config.RouteFileManager
+	store         *store.Store
 	logger        *logger.Manager
 
 	cfg        config.Config
@@ -71,34 +71,42 @@ func NewAppWithPaths(configPath, logPath string) (*App, error) {
 			return nil, fmt.Errorf("写入默认配置失败: %w", err)
 		}
 	}
-	routeManager := config.NewRouteFileManager(filepath.Dir(configPath))
-	activeFile, err := routeManager.EnsureActive(cfg.Route.ActiveFile)
+
+	configDir := filepath.Dir(configPath)
+	dbPath := filepath.Join(configDir, "goproxy.db")
+	s, err := store.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("初始化规则文件失败: %w", err)
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
-	if cfg.Route.ActiveFile != activeFile {
-		cfg.Route.ActiveFile = activeFile
-		if err := manager.Save(cfg); err != nil {
-			return nil, fmt.Errorf("保存当前规则文件回退失败: %w", err)
-		}
+
+	if err := s.ImportFromYAML(configPath); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("数据迁移失败: %w", err)
 	}
+
+	s.FillWebConfig(&cfg)
+	s.FillAuthUsers(&cfg)
+	s.FillActiveRoute(&cfg)
 
 	logManager, err := logger.NewManager(cfg.Log, logPath)
 	if err != nil {
+		s.Close()
 		return nil, fmt.Errorf("创建日志管理器失败: %w", err)
 	}
 
 	collector := stats.NewCollector()
 	server := proxy.NewServer(cfg, collector)
 	server.SetLogger(logManager)
-	if err := applyRoutePolicy(server, routeManager, cfg); err != nil {
+	if err := applyAppRoutePolicy(server, s, cfg); err != nil {
+		s.Close()
 		return nil, fmt.Errorf("加载路由策略失败: %w", err)
 	}
+
 	return &App{
 		configPath:    configPath,
 		logPath:       logPath,
 		configManager: manager,
-		routeManager:  routeManager,
+		store:         s,
 		logger:        logManager,
 		cfg:           cfg,
 		runtimeCfg:    cfg,
@@ -113,7 +121,6 @@ func (a *App) startup(ctx context.Context) {
 	a.mu.Lock()
 	a.ctx = ctx
 
-	// Disable the native maximize affordance while keeping normal window controls.
 	go platform.DisableMaximizeButton(appTitle)
 
 	if a.tray != nil {
@@ -140,6 +147,7 @@ func (a *App) shutdown(ctx context.Context) {
 	server := a.server
 	logManager := a.logger
 	tray := a.tray
+	s := a.store
 	a.mu.Unlock()
 
 	if server != nil {
@@ -152,13 +160,20 @@ func (a *App) shutdown(ctx context.Context) {
 		logManager.Info(appSource, "应用正在退出")
 		_ = logManager.Close()
 	}
+	if s != nil {
+		s.Close()
+	}
 }
 
-// GetConfig returns the current complete YAML-backed configuration.
+// GetConfig returns the current complete configuration.
 func (a *App) GetConfig() config.Config {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.cfg
+	cfg := a.cfg
+	a.store.FillWebConfig(&cfg)
+	a.store.FillAuthUsers(&cfg)
+	a.store.FillActiveRoute(&cfg)
+	return cfg
 }
 
 // SaveConfig validates and persists configuration changes.
@@ -218,10 +233,8 @@ func (a *App) SaveConfig(cfg config.Config) error {
 			return err
 		}
 		a.runtimeCfg = cfg
-	} else if !reflect.DeepEqual(oldCfg.Auth, cfg.Auth) && a.server != nil {
-		a.server.SetAuthConfig(cfg.Auth)
-		a.runtimeCfg.Auth = cfg.Auth
 	}
+
 	if running && routeConfigChanged(oldCfg, cfg) {
 		if err := a.applyRoutePolicyLocked(cfg); err != nil {
 			return err
@@ -399,16 +412,14 @@ func (a *App) GetNetworkInterfaces() ([]platform.NetworkInterface, error) {
 func (a *App) ListRouteFiles() ([]config.RouteFileInfo, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	return a.routeManager.List(a.cfg.Route.ActiveFile)
+	return a.store.ListRouteRuleSets()
 }
 
 // LoadRouteFile loads one route rule file.
 func (a *App) LoadRouteFile(name string) (config.RouteRuleSet, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	return a.routeManager.Load(name)
+	return a.store.LoadRouteRuleSet(name)
 }
 
 // SaveRouteFile validates and saves one route rule file.
@@ -416,10 +427,11 @@ func (a *App) SaveRouteFile(name string, set config.RouteRuleSet) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if err := a.routeManager.Save(name, set); err != nil {
+	if err := a.store.SaveRouteRuleSet(name, set); err != nil {
 		return err
 	}
-	if name == a.cfg.Route.ActiveFile {
+	active, _ := a.store.GetActiveRouteFileName()
+	if name == active {
 		if err := a.applyRoutePolicyLocked(a.cfg); err != nil {
 			return err
 		}
@@ -431,19 +443,18 @@ func (a *App) SaveRouteFile(name string, set config.RouteRuleSet) error {
 func (a *App) CreateRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	return a.routeManager.Create(name)
+	return a.store.CreateRouteRuleSet(name)
 }
 
 // DeleteRouteFile removes a non-active route rule file.
 func (a *App) DeleteRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-
-	if name == a.cfg.Route.ActiveFile {
+	active, _ := a.store.GetActiveRouteFileName()
+	if name == active {
 		return errors.New("当前正在使用的规则文件不能删除")
 	}
-	return a.routeManager.Delete(name)
+	return a.store.DeleteRouteRuleSet(name)
 }
 
 // SetActiveRouteFile switches the active route policy file for new connections.
@@ -451,14 +462,11 @@ func (a *App) SetActiveRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if _, err := a.routeManager.Load(name); err != nil {
+	if err := a.store.SetActiveRouteRuleSet(name); err != nil {
 		return err
 	}
 	cfg := a.cfg
 	cfg.Route.ActiveFile = name
-	if err := a.configManager.Save(cfg); err != nil {
-		return err
-	}
 	a.cfg = cfg
 	if err := a.applyRoutePolicyLocked(cfg); err != nil {
 		return err
@@ -548,13 +556,13 @@ func (a *App) AddUser(username, password string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	cfg := a.cfg
-	for _, user := range cfg.Auth.Users {
-		if user.Username == username {
-			return fmt.Errorf("用户 %q 已存在，请换一个用户名", username)
-		}
+	if err := a.store.AddAuthUser(username, hash); err != nil {
+		return err
 	}
-	cfg.Auth.Users = append(cfg.Auth.Users, config.AuthUser{Username: username, Password: hash})
+
+	cfg := a.cfg
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
@@ -568,20 +576,13 @@ func (a *App) RemoveUser(username string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if err := a.store.RemoveAuthUser(username); err != nil {
+		return err
+	}
+
 	cfg := a.cfg
-	next := cfg.Auth.Users[:0]
-	found := false
-	for _, user := range cfg.Auth.Users {
-		if user.Username == username {
-			found = true
-			continue
-		}
-		next = append(next, user)
-	}
-	if !found {
-		return fmt.Errorf("用户 %q 不存在", username)
-	}
-	cfg.Auth.Users = next
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
@@ -603,18 +604,13 @@ func (a *App) ResetUserPassword(username, password string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if err := a.store.UpdateAuthUserPassword(username, hash); err != nil {
+		return err
+	}
+
 	cfg := a.cfg
-	found := false
-	for index := range cfg.Auth.Users {
-		if cfg.Auth.Users[index].Username == username {
-			cfg.Auth.Users[index].Password = hash
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("用户 %q 不存在", username)
-	}
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
@@ -689,7 +685,7 @@ func listenerConfigChanged(a, b config.Config) bool {
 }
 
 func sameRuntimeConfig(a, b config.Config) bool {
-	return a.Server == b.Server && reflect.DeepEqual(a.Auth, b.Auth) && a.Relay == b.Relay
+	return a.Server == b.Server && a.Relay == b.Relay
 }
 
 func routeConfigChanged(a, b config.Config) bool {
@@ -697,18 +693,23 @@ func routeConfigChanged(a, b config.Config) bool {
 }
 
 func (a *App) applyRoutePolicyLocked(cfg config.Config) error {
-	return applyRoutePolicy(a.server, a.routeManager, cfg)
+	return applyAppRoutePolicy(a.server, a.store, cfg)
 }
 
-func applyRoutePolicy(server *proxy.Server, routeManager *config.RouteFileManager, cfg config.Config) error {
-	if server == nil || routeManager == nil {
+func applyAppRoutePolicy(server *proxy.Server, s *store.Store, cfg config.Config) error {
+	if server == nil {
 		return nil
 	}
 	if !cfg.Route.Enabled {
 		server.SetRoutePolicy(false, config.RouteRuleSet{})
 		return nil
 	}
-	set, err := routeManager.Load(cfg.Route.ActiveFile)
+	activeFile, err := s.GetActiveRouteFileName()
+	if err != nil || activeFile == "" {
+		server.SetRoutePolicy(false, config.RouteRuleSet{})
+		return nil
+	}
+	set, err := s.LoadRouteRuleSet(activeFile)
 	if err != nil {
 		return err
 	}

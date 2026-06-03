@@ -2,6 +2,8 @@ package webapi
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +17,7 @@ import (
 	"gitee.com/jiuhuidalan1/goproxy/internal/platform"
 	"gitee.com/jiuhuidalan1/goproxy/internal/proxy"
 	"gitee.com/jiuhuidalan1/goproxy/internal/stats"
+	"gitee.com/jiuhuidalan1/goproxy/internal/store"
 	"go.uber.org/zap"
 )
 
@@ -25,7 +28,7 @@ type WebApp struct {
 	configPath    string
 	logPath       string
 	configManager *config.Manager
-	routeManager  *config.RouteFileManager
+	store         *store.Store
 	logger        *logger.Manager
 	cfg           config.Config
 	runtimeCfg    config.Config
@@ -49,54 +52,65 @@ func NewWebApp(configPath, logPath string) (*WebApp, error) {
 		}
 	}
 
-	routeManager := config.NewRouteFileManager(filepath.Dir(configPath))
-	activeFile, err := routeManager.EnsureActive(cfg.Route.ActiveFile)
+	configDir := filepath.Dir(configPath)
+	dbPath := filepath.Join(configDir, "goproxy.db")
+	s, err := store.Open(dbPath)
 	if err != nil {
-		return nil, fmt.Errorf("初始化规则文件失败: %w", err)
+		return nil, fmt.Errorf("打开数据库失败: %w", err)
 	}
-	if cfg.Route.ActiveFile != activeFile {
-		cfg.Route.ActiveFile = activeFile
-		if err := manager.Save(cfg); err != nil {
-			return nil, fmt.Errorf("保存当前规则文件回退失败: %w", err)
-		}
+
+	if err := s.ImportFromYAML(configPath); err != nil {
+		s.Close()
+		return nil, fmt.Errorf("数据迁移失败: %w", err)
 	}
+
+	s.FillWebConfig(&cfg)
+	s.FillAuthUsers(&cfg)
+	s.FillActiveRoute(&cfg)
 
 	logManager, err := logger.NewManager(cfg.Log, logPath)
 	if err != nil {
+		s.Close()
 		return nil, fmt.Errorf("创建日志管理器失败: %w", err)
 	}
 
 	collector := stats.NewCollector()
 	server := proxy.NewServer(cfg, collector)
 	server.SetLogger(logManager)
-	if err := applyWebRoutePolicy(server, routeManager, cfg); err != nil {
+	if err := applyWebRoutePolicyFromStore(server, s, cfg); err != nil {
+		s.Close()
 		return nil, fmt.Errorf("加载路由策略失败: %w", err)
 	}
 
 	hub := newWSHub()
 	go hub.run()
 
-	webPassword := cfg.Web.Password
-	if webPassword == "" {
-		webPassword, err = proxy.HashPassword("admin")
-		if err != nil {
-			return nil, fmt.Errorf("生成默认面板密码失败: %w", err)
-		}
-		cfg.Web.Password = webPassword
-		if err := manager.Save(cfg); err != nil {
-			return nil, fmt.Errorf("保存面板默认密码失败: %w", err)
-		}
-		logManager.Info(webSource, "已生成默认 Web 面板密码")
-		logManager.Info(webSource, "默认用户名: admin, 默认密码: admin, 请尽快修改")
+	jwtSecret, _ := s.GetJWTSecret()
+	expireHours, _ := s.GetJWTExpireHours()
+	if expireHours <= 0 {
+		expireHours = 24
 	}
 
-	auth := newTokenIssuer(cfg.Web.Username, webPassword, cfg.Web.JWTSecret, cfg.Web.JWTExpireHours)
+	auth := newTokenIssuer(
+		func(username, password string) (string, error) {
+			u, err := s.GetWebUser(username)
+			if err != nil {
+				return "", err
+			}
+			if u == nil {
+				return "", errors.New("用户名或密码错误")
+			}
+			return u.Password, nil
+		},
+		jwtSecret,
+		expireHours,
+	)
 
 	app := &WebApp{
 		configPath:    configPath,
 		logPath:       logPath,
 		configManager: manager,
-		routeManager:  routeManager,
+		store:         s,
 		logger:        logManager,
 		cfg:           cfg,
 		runtimeCfg:    cfg,
@@ -125,6 +139,49 @@ func (a *WebApp) Auth() *tokenIssuer {
 	return a.auth
 }
 
+func (a *WebApp) GetJWTExpireHours() int {
+	hours, err := a.store.GetJWTExpireHours()
+	if err != nil || hours <= 0 {
+		return 24
+	}
+	return hours
+}
+
+func (a *WebApp) MustChangePwd(username string) bool {
+	u, err := a.store.GetWebUser(username)
+	if err != nil || u == nil {
+		return false
+	}
+	return u.MustChangePwd
+}
+
+func (a *WebApp) ChangePassword(username, oldPassword, newPassword string) (string, time.Time, error) {
+	u, err := a.store.VerifyWebUser(username, oldPassword)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("旧密码验证失败: %s", err.Error())
+	}
+	_ = u
+
+	if err := a.store.UpdateWebUserPassword(username, newPassword, false); err != nil {
+		return "", time.Time{}, fmt.Errorf("更新密码失败: %w", err)
+	}
+
+	newSecret := generateRandomSecret()
+	if err := a.store.UpdateJWTSecret(newSecret); err != nil {
+		return "", time.Time{}, fmt.Errorf("更新 JWT 密钥失败: %w", err)
+	}
+	a.auth.SetSecret([]byte(newSecret))
+
+	token, err := a.auth.Authenticate(username, newPassword)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+
+	expireHours := a.GetJWTExpireHours()
+	expiresAt := time.Now().Add(time.Duration(expireHours) * time.Hour)
+	return token, expiresAt, nil
+}
+
 func (a *WebApp) Close() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -140,12 +197,19 @@ func (a *WebApp) Close() {
 		a.logger.Info(webSource, "Web 服务已关闭")
 		_ = a.logger.Close()
 	}
+	if a.store != nil {
+		a.store.Close()
+	}
 }
 
 func (a *WebApp) GetConfig() config.Config {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.cfg
+	cfg := a.cfg
+	a.store.FillWebConfig(&cfg)
+	a.store.FillAuthUsers(&cfg)
+	a.store.FillActiveRoute(&cfg)
+	return cfg
 }
 
 func (a *WebApp) SaveConfig(cfg config.Config) error {
@@ -196,9 +260,13 @@ func (a *WebApp) SaveConfig(cfg config.Config) error {
 			return err
 		}
 		a.runtimeCfg = cfg
-	} else if !reflect.DeepEqual(oldCfg.Auth, cfg.Auth) && a.server != nil {
-		a.server.SetAuthConfig(cfg.Auth)
-		a.runtimeCfg.Auth = cfg.Auth
+	} else {
+		authUsers, _ := a.store.ListAuthUsers()
+		cfg.Auth.Users = authUsers
+		if !reflect.DeepEqual(oldCfg.Auth.Enabled, cfg.Auth.Enabled) && a.server != nil {
+			a.server.SetAuthConfig(cfg.Auth)
+			a.runtimeCfg.Auth = cfg.Auth
+		}
 	}
 
 	if running && routeConfigChanged(oldCfg, cfg) {
@@ -356,14 +424,14 @@ func (a *WebApp) AddUser(username, password string) error {
 	if err != nil {
 		return err
 	}
+	if err := a.store.AddAuthUser(username, hash); err != nil {
+		return err
+	}
 
 	cfg := a.cfg
-	for _, user := range cfg.Auth.Users {
-		if user.Username == username {
-			return fmt.Errorf("用户 %q 已存在", username)
-		}
-	}
-	cfg.Auth.Users = append(cfg.Auth.Users, config.AuthUser{Username: username, Password: hash})
+	cfg.Auth.Users = nil
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
@@ -371,20 +439,13 @@ func (a *WebApp) RemoveUser(username string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
+	if err := a.store.RemoveAuthUser(username); err != nil {
+		return err
+	}
+
 	cfg := a.cfg
-	next := cfg.Auth.Users[:0]
-	found := false
-	for _, user := range cfg.Auth.Users {
-		if user.Username == username {
-			found = true
-			continue
-		}
-		next = append(next, user)
-	}
-	if !found {
-		return fmt.Errorf("用户 %q 不存在", username)
-	}
-	cfg.Auth.Users = next
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
@@ -396,42 +457,38 @@ func (a *WebApp) ResetUserPassword(username, password string) error {
 	if err != nil {
 		return err
 	}
+	if err := a.store.UpdateAuthUserPassword(username, hash); err != nil {
+		return err
+	}
 
 	cfg := a.cfg
-	found := false
-	for i := range cfg.Auth.Users {
-		if cfg.Auth.Users[i].Username == username {
-			cfg.Auth.Users[i].Password = hash
-			found = true
-			break
-		}
-	}
-	if !found {
-		return fmt.Errorf("用户 %q 不存在", username)
-	}
+	users, _ := a.store.ListAuthUsers()
+	cfg.Auth.Users = users
 	return a.saveAuthConfigLocked(cfg)
 }
 
 func (a *WebApp) ListRouteFiles() ([]config.RouteFileInfo, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.routeManager.List(a.cfg.Route.ActiveFile)
+	return a.store.ListRouteRuleSets()
 }
 
 func (a *WebApp) LoadRouteFile(name string) (config.RouteRuleSet, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.routeManager.Load(name)
+	return a.store.LoadRouteRuleSet(name)
 }
 
 func (a *WebApp) SaveRouteFile(name string, set config.RouteRuleSet) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if err := a.routeManager.Save(name, set); err != nil {
+	if err := a.store.SaveRouteRuleSet(name, set); err != nil {
 		return err
 	}
-	if name == a.cfg.Route.ActiveFile {
+
+	active, _ := a.store.GetActiveRouteFileName()
+	if name == active {
 		if err := a.applyRoutePolicyLocked(a.cfg); err != nil {
 			return err
 		}
@@ -442,30 +499,28 @@ func (a *WebApp) SaveRouteFile(name string, set config.RouteRuleSet) error {
 func (a *WebApp) CreateRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.routeManager.Create(name)
+	return a.store.CreateRouteRuleSet(name)
 }
 
 func (a *WebApp) DeleteRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if name == a.cfg.Route.ActiveFile {
+	active, _ := a.store.GetActiveRouteFileName()
+	if name == active {
 		return errors.New("当前正在使用的规则文件不能删除")
 	}
-	return a.routeManager.Delete(name)
+	return a.store.DeleteRouteRuleSet(name)
 }
 
 func (a *WebApp) SetActiveRouteFile(name string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 
-	if _, err := a.routeManager.Load(name); err != nil {
+	if err := a.store.SetActiveRouteRuleSet(name); err != nil {
 		return err
 	}
 	cfg := a.cfg
 	cfg.Route.ActiveFile = name
-	if err := a.configManager.Save(cfg); err != nil {
-		return err
-	}
 	a.cfg = cfg
 	if err := a.applyRoutePolicyLocked(cfg); err != nil {
 		return err
@@ -499,7 +554,7 @@ func (a *WebApp) saveAuthConfigLocked(cfg config.Config) error {
 }
 
 func (a *WebApp) applyRoutePolicyLocked(cfg config.Config) error {
-	return applyWebRoutePolicy(a.server, a.routeManager, cfg)
+	return applyWebRoutePolicyFromStore(a.server, a.store, cfg)
 }
 
 func (a *WebApp) bridgeEvents(logManager *logger.Manager) {
@@ -543,15 +598,20 @@ func (a *WebApp) StartStatsLoop(ctx context.Context) {
 	}
 }
 
-func applyWebRoutePolicy(server *proxy.Server, routeManager *config.RouteFileManager, cfg config.Config) error {
-	if server == nil || routeManager == nil {
+func applyWebRoutePolicyFromStore(server *proxy.Server, s *store.Store, cfg config.Config) error {
+	if server == nil {
 		return nil
 	}
 	if !cfg.Route.Enabled {
 		server.SetRoutePolicy(false, config.RouteRuleSet{})
 		return nil
 	}
-	set, err := routeManager.Load(cfg.Route.ActiveFile)
+	activeFile, err := s.GetActiveRouteFileName()
+	if err != nil || activeFile == "" {
+		server.SetRoutePolicy(false, config.RouteRuleSet{})
+		return nil
+	}
+	set, err := s.LoadRouteRuleSet(activeFile)
 	if err != nil {
 		return err
 	}
@@ -559,12 +619,18 @@ func applyWebRoutePolicy(server *proxy.Server, routeManager *config.RouteFileMan
 	return nil
 }
 
+func generateRandomSecret() string {
+	b := make([]byte, 32)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
 func listenerConfigChanged(a, b config.Config) bool {
 	return a.Server.SOCKS5 != b.Server.SOCKS5 || a.Server.HTTP != b.Server.HTTP
 }
 
 func sameRuntimeConfig(a, b config.Config) bool {
-	return a.Server == b.Server && reflect.DeepEqual(a.Auth, b.Auth) && a.Relay == b.Relay
+	return a.Server == b.Server && a.Relay == b.Relay
 }
 
 func routeConfigChanged(a, b config.Config) bool {

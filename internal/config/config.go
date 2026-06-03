@@ -15,9 +15,9 @@ type Config struct {
 type WebConfig struct {
 	Enabled        bool   `yaml:"enabled" json:"enabled"`
 	Listen         string `yaml:"listen" json:"listen"`
-	Username       string `yaml:"username" json:"username"`
-	Password       string `yaml:"password" json:"-"`
-	JWTSecret      string `yaml:"jwt_secret" json:"-"`
+	Username       string `yaml:"-" json:"username"`
+	Password       string `yaml:"-" json:"-"`
+	JWTSecret      string `yaml:"-" json:"-"`
 	JWTExpireHours int    `yaml:"jwt_expire_hours" json:"jwtExpireHours"`
 	TLSEnabled     bool   `yaml:"tls_enabled" json:"tlsEnabled"`
 	TLSCert        string `yaml:"tls_cert" json:"-"`
@@ -40,7 +40,7 @@ type ProtocolConfig struct {
 // AuthConfig contains optional username/password authentication settings.
 type AuthConfig struct {
 	Enabled bool       `yaml:"enabled" json:"enabled"`
-	Users   []AuthUser `yaml:"users" json:"users"`
+	Users   []AuthUser `yaml:"-" json:"users"`
 }
 
 // AuthUser stores a username and bcrypt password hash.
@@ -79,7 +79,7 @@ type UIConfig struct {
 // RouteConfig contains route policy runtime switches.
 type RouteConfig struct {
 	Enabled    bool   `yaml:"enabled" json:"enabled"`
-	ActiveFile string `yaml:"active_file" json:"activeFile"`
+	ActiveFile string `yaml:"-" json:"activeFile"`
 }
 
 // RouteRuleSet stores a complete .rule file.

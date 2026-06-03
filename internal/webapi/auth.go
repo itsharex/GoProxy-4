@@ -27,15 +27,13 @@ type tokenIssuer struct {
 	mu       sync.RWMutex
 	secret   []byte
 	expire   time.Duration
-	username string
-	password string
+	validateFn func(username, password string) (passwordHash string, err error)
 }
 
-func newTokenIssuer(username, passwordHash string, secret string, expireHours int) *tokenIssuer {
+func newTokenIssuer(validateFn func(username, password string) (string, error), secret string, expireHours int) *tokenIssuer {
 	ti := &tokenIssuer{
-		expire:   time.Duration(expireHours) * time.Hour,
-		username: username,
-		password: passwordHash,
+		expire:     time.Duration(expireHours) * time.Hour,
+		validateFn: validateFn,
 	}
 	if secret != "" {
 		ti.secret = []byte(secret)
@@ -52,10 +50,11 @@ func generateSecret() []byte {
 }
 
 func (ti *tokenIssuer) Authenticate(username, password string) (string, error) {
-	if username != ti.username {
-		return "", errors.New("用户名或密码错误")
+	hash, err := ti.validateFn(username, password)
+	if err != nil {
+		return "", err
 	}
-	if err := bcrypt.CompareHashAndPassword([]byte(ti.password), []byte(password)); err != nil {
+	if err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password)); err != nil {
 		return "", errors.New("用户名或密码错误")
 	}
 	return ti.issue(username)
@@ -103,6 +102,12 @@ func (ti *tokenIssuer) Validate(tokenStr string) (*jwtClaims, error) {
 	return &claims, nil
 }
 
+func (ti *tokenIssuer) SetSecret(secret []byte) {
+	ti.mu.Lock()
+	ti.secret = secret
+	ti.mu.Unlock()
+}
+
 func (ti *tokenIssuer) sign(data []byte) []byte {
 	h := hmac.New(sha256.New, ti.secret)
 	h.Write(data)
@@ -112,13 +117,6 @@ func (ti *tokenIssuer) sign(data []byte) []byte {
 func (ti *tokenIssuer) verify(data, sig []byte) bool {
 	expected := ti.sign(data)
 	return hmac.Equal(sig, expected)
-}
-
-func (ti *tokenIssuer) UpdateCredentials(username, passwordHash string) {
-	ti.mu.Lock()
-	ti.username = username
-	ti.password = passwordHash
-	ti.mu.Unlock()
 }
 
 func base64urlEncode(data []byte) string {

@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net"
 	"strings"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 // Validate checks the complete runtime configuration.
@@ -46,9 +44,6 @@ func Validate(cfg Config) error {
 	}
 	if err := validateAuth(cfg.Auth); err != nil {
 		return err
-	}
-	if err := ValidateRouteFileName(cfg.Route.ActiveFile); err != nil {
-		return fmt.Errorf("当前规则文件无效: %w", err)
 	}
 
 	if cfg.Web.Enabled {
@@ -97,28 +92,6 @@ func ValidateRouteFileName(name string) error {
 func validateAuth(auth AuthConfig) error {
 	if !auth.Enabled {
 		return nil
-	}
-	if len(auth.Users) == 0 {
-		return errors.New("开启认证前，请先新增至少一个认证用户")
-	}
-
-	seen := make(map[string]struct{}, len(auth.Users))
-	for index, user := range auth.Users {
-		username := strings.TrimSpace(user.Username)
-		if username == "" {
-			return fmt.Errorf("第 %d 个认证用户缺少用户名", index+1)
-		}
-		if _, exists := seen[username]; exists {
-			return fmt.Errorf("认证用户名 %q 重复，请使用唯一用户名", username)
-		}
-		seen[username] = struct{}{}
-
-		if strings.TrimSpace(user.Password) == "" {
-			return fmt.Errorf("第 %d 个认证用户缺少密码", index+1)
-		}
-		if _, err := bcrypt.Cost([]byte(user.Password)); err != nil {
-			return fmt.Errorf("第 %d 个认证用户的密码格式无效，请通过页面新增或重置密码", index+1)
-		}
 	}
 	return nil
 }
@@ -205,7 +178,7 @@ func validateWeb(web WebConfig) error {
 		return errors.New("Web 管理面板端口必须在 1 到 65535 之间")
 	}
 	if strings.TrimSpace(web.Username) == "" {
-		return errors.New("Web 管理面板用户名不能为空")
+		return nil
 	}
 	if web.JWTExpireHours <= 0 {
 		return errors.New("Web 面板 Token 有效期必须大于 0 小时")

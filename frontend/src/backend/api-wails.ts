@@ -1,7 +1,9 @@
 import type {
   ActiveConnection,
   AppConfig,
+  CheckAuthResponse,
   LogEntry,
+  LoginResponse,
   NetworkInterface,
   RouteFileInfo,
   RouteRuleSet,
@@ -155,12 +157,12 @@ export function onEvent<T>(eventName: string, callback: (payload: T) => void): E
   }
 }
 
-export function webLogin(_username: string, _password: string): Promise<{ token: string; expiresAt: string }> {
+export function webLogin(_username: string, _password: string): Promise<LoginResponse> {
   return Promise.reject(new Error('Web 登录仅在 Web 模式下可用'))
 }
 
-export function webCheckAuth(): Promise<boolean> {
-  return Promise.resolve(true)
+export function webCheckAuth(): Promise<CheckAuthResponse> {
+  return Promise.resolve({ valid: true, username: '', mustChangePwd: false })
 }
 
 export function isWebLoggedIn(): boolean {

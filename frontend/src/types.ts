@@ -116,6 +116,24 @@ export interface WebConfig {
   tlsEnabled: boolean
 }
 
+export interface LoginResponse {
+  token: string
+  expiresAt: string
+  username: string
+  mustChangePwd: boolean
+}
+
+export interface ChangePasswordResponse {
+  token: string
+  expiresAt: string
+}
+
+export interface CheckAuthResponse {
+  valid: boolean
+  username: string
+  mustChangePwd: boolean
+}
+
 export interface RouteRuleSet {
   name: string
   version: number

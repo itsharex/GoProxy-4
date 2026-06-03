@@ -16,7 +16,7 @@ import {
   Sun
 } from 'lucide-vue-next'
 import { darkTheme, NConfigProvider, NDialogProvider, NIcon, NMessageProvider, NModal, NPopover } from 'naive-ui'
-import { getLocalIPAddresses, isWails, isWebLoggedIn, onEvent, onServerSnapshot } from './backend/api'
+import { getLocalIPAddresses, isWails, isWebLoggedIn, webCheckAuth, onEvent, onServerSnapshot } from './backend/api'
 import Dashboard from './pages/Dashboard.vue'
 import ActiveConnectionsPage from './pages/ActiveConnectionsPage.vue'
 import AuthPage from './pages/AuthPage.vue'
@@ -82,6 +82,9 @@ const activePage = ref<PageKey>(enabledKeys.includes(initialHash) ? initialHash 
 const systemDark = ref(window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true)
 const serverActionLocked = ref(false)
 const localIPs = ref<string[]>([])
+const forceMustChangePwd = ref(false)
+const isLoginChecked = ref(false)
+const loginRequired = ref(false)
 import { version } from '../package.json'
 import { marked } from 'marked'
 const appVersion = `V${version}`
@@ -166,8 +169,27 @@ async function loadAppData() {
   onServerSnapshot(server.applySnapshot)
 }
 
-onMounted(() => {
-  if (!isWails() && !isWebLoggedIn()) return
+onMounted(async () => {
+  // 在Web环境下，先进行认证检查
+  if (!isWails()) {
+    loginRequired.value = !isWebLoggedIn()
+    if (!loginRequired.value) {
+      try {
+        const check = await webCheckAuth()
+        if (check.mustChangePwd) {
+          forceMustChangePwd.value = true
+          loginRequired.value = true
+        }
+      } catch {
+        loginRequired.value = true
+      }
+    }
+    isLoginChecked.value = true
+    if (loginRequired.value || forceMustChangePwd.value) {
+      return
+    }
+  }
+
   void loadAppData()
 
   const media = window.matchMedia?.('(prefers-color-scheme: dark)')
@@ -181,7 +203,10 @@ onMounted(() => {
   <NConfigProvider :theme="naiveTheme">
     <NMessageProvider>
       <NDialogProvider>
-        <LoginPage v-if="!isWails() && !isWebLoggedIn()" />
+        <div v-if="!isWails() && !isLoginChecked" class="loading-page">
+          <div class="loading-content">加载中...</div>
+        </div>
+        <LoginPage v-else-if="!isWails() && (loginRequired || forceMustChangePwd)" />
         <div v-else class="app-shell" :data-theme="currentTheme">
           <aside class="sidebar">
             <div class="nav-logo">
@@ -282,3 +307,26 @@ onMounted(() => {
     </NMessageProvider>
   </NConfigProvider>
 </template>
+
+<style scoped>
+.loading-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: #f5f7fa;
+}
+
+[data-theme="dark"] .loading-page {
+  background: #1a1a2e;
+}
+
+.loading-content {
+  font-size: 16px;
+  color: #666;
+}
+
+[data-theme="dark"] .loading-content {
+  color: #999;
+}
+</style>

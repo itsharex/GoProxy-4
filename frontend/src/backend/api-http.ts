@@ -1,7 +1,10 @@
 import type {
   ActiveConnection,
   AppConfig,
+  ChangePasswordResponse,
+  CheckAuthResponse,
   LogEntry,
+  LoginResponse,
   NetworkInterface,
   RouteFileInfo,
   RouteRuleSet,
@@ -34,7 +37,7 @@ function getToken(): string | null {
   return localStorage.getItem('goproxy_token')
 }
 
-function setToken(token: string) {
+export function setToken(token: string) {
   localStorage.setItem('goproxy_token', token)
 }
 
@@ -120,14 +123,14 @@ export function isWebLoggedIn(): boolean {
   return !!getToken()
 }
 
-export async function webLogin(username: string, password: string): Promise<{ token: string; expiresAt: string }> {
+export async function webLogin(username: string, password: string): Promise<LoginResponse> {
   clearToken()
   const res = await fetch(`${API_BASE}/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username, password })
   })
-  const json: ApiResponse<{ token: string; expiresAt: string }> = await res.json()
+  const json: ApiResponse<LoginResponse> = await res.json()
   if (!json.ok) {
     throw new Error(json.error || '登录失败')
   }
@@ -136,13 +139,18 @@ export async function webLogin(username: string, password: string): Promise<{ to
   return json.data
 }
 
-export async function webCheckAuth(): Promise<boolean> {
+export async function webCheckAuth(): Promise<CheckAuthResponse> {
   try {
-    await request<boolean>('GET', '/auth/check')
-    return true
+    return await request<CheckAuthResponse>('GET', '/auth/check')
   } catch {
-    return false
+    return { valid: false, username: '', mustChangePwd: false }
   }
+}
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<ChangePasswordResponse> {
+  const result = await request<ChangePasswordResponse>('PUT', '/auth/change-password', { oldPassword, newPassword })
+  setToken(result.token)
+  return result
 }
 
 export async function getConfig() {

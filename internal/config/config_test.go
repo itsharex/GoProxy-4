@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"golang.org/x/crypto/bcrypt"
 )
 
 func TestDefaultConfigIsValid(t *testing.T) {
@@ -134,37 +132,6 @@ func TestValidateRejectsInvalidConfig(t *testing.T) {
 				cfg.Server.HTTP.Port = 9000
 			},
 			want: "不能使用完全相同",
-		},
-		{
-			name: "auth enabled without users",
-			edit: func(cfg *Config) {
-				cfg.Auth.Enabled = true
-				cfg.Auth.Users = nil
-			},
-			want: "新增至少一个认证用户",
-		},
-		{
-			name: "duplicate auth users",
-			edit: func(cfg *Config) {
-				hash, err := bcrypt.GenerateFromPassword([]byte("secret"), bcrypt.MinCost)
-				if err != nil {
-					t.Fatalf("hash password: %v", err)
-				}
-				cfg.Auth.Enabled = true
-				cfg.Auth.Users = []AuthUser{
-					{Username: "alice", Password: string(hash)},
-					{Username: "alice", Password: string(hash)},
-				}
-			},
-			want: "重复",
-		},
-		{
-			name: "auth password must be bcrypt",
-			edit: func(cfg *Config) {
-				cfg.Auth.Enabled = true
-				cfg.Auth.Users = []AuthUser{{Username: "alice", Password: "plain"}}
-			},
-			want: "密码格式无效",
 		},
 	}
 

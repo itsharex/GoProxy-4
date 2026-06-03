@@ -1,7 +1,10 @@
 import type {
   ActiveConnection,
   AppConfig,
+  ChangePasswordResponse,
+  CheckAuthResponse,
   LogEntry,
+  LoginResponse,
   NetworkInterface,
   RouteFileInfo,
   RouteRuleSet,
@@ -47,14 +50,18 @@ export function isWebLoggedIn(): boolean {
   return !!localStorage.getItem('goproxy_token')
 }
 
-export async function webLogin(username: string, password: string) {
+export async function webLogin(username: string, password: string): Promise<LoginResponse> {
   if (detectWails()) return (await getWails()).webLogin(username, password)
   return (await getHttp()).webLogin(username, password)
 }
 
-export async function webCheckAuth(): Promise<boolean> {
-  if (detectWails()) return true
+export async function webCheckAuth(): Promise<CheckAuthResponse> {
+  if (detectWails()) return { valid: true, username: '', mustChangePwd: false }
   return (await getHttp()).webCheckAuth()
+}
+
+export async function changePassword(oldPassword: string, newPassword: string): Promise<ChangePasswordResponse> {
+  return (await getHttp()).changePassword(oldPassword, newPassword)
 }
 
 export async function getConfig(): Promise<AppConfig> {
@@ -183,3 +190,4 @@ export function onServerSnapshot(callback: (snapshot: SSESnapshot) => void): Eve
 }
 
 export { type EventDisposer }
+export { isWebLoggedIn as checkWebLoggedIn } from './api-http'

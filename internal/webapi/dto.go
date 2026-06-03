@@ -29,8 +29,10 @@ type loginRequest struct {
 }
 
 type loginResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expiresAt"`
+	Token        string `json:"token"`
+	ExpiresAt    string `json:"expiresAt"`
+	Username     string `json:"username"`
+	MustChangePwd bool  `json:"mustChangePwd"`
 }
 
 type authEnabledRequest struct {
@@ -59,5 +61,17 @@ type logsQuery struct {
 }
 
 type checkResponse struct {
-	Valid bool `json:"valid"`
+	Valid         bool   `json:"valid"`
+	Username      string `json:"username"`
+	MustChangePwd bool   `json:"mustChangePwd"`
+}
+
+type changePasswordRequest struct {
+	OldPassword string `json:"oldPassword"`
+	NewPassword string `json:"newPassword"`
+}
+
+type changePasswordResponse struct {
+	Token     string `json:"token"`
+	ExpiresAt string `json:"expiresAt"`
 }

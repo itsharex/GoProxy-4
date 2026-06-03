@@ -49,7 +49,7 @@ func authMiddleware(issuer *tokenIssuer, next http.HandlerFunc) http.HandlerFunc
 			writeError(w, http.StatusUnauthorized, err.Error())
 			return
 		}
-		_ = claims
+		r.Header.Set("X-User-Name", claims.Username)
 		next(w, r)
 	}
 }
